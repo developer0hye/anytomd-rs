@@ -144,6 +144,92 @@ Follow these steps in order when merging a PR. Do not skip any step.
 
 ---
 
+## Docker Development Environment
+
+A Docker-based development environment is provided for reproducible builds and tests on Linux, independent of the host OS. This is especially useful for:
+- Cross-platform verification without needing native Linux
+- Ensuring consistent build results across developer machines
+- Running the full verification loop in an isolated environment
+- CI-like local validation before pushing
+
+### Prerequisites
+
+- Docker Engine 20.10+ and Docker Compose V2 (`docker compose`)
+- On macOS, Docker Desktop or OrbStack
+
+### Quick Start
+
+```bash
+# Full verification loop (fmt + clippy + test + release build)
+docker compose run --rm verify
+
+# Run tests only
+docker compose run --rm test
+
+# Lint only (clippy + fmt check)
+docker compose run --rm lint
+
+# Debug build
+docker compose run --rm build
+
+# Release build
+docker compose run --rm release
+
+# Interactive shell inside the container
+docker compose run --rm shell
+```
+
+### Available Services
+
+| Service            | Command                                  | Description                              |
+|--------------------|------------------------------------------|------------------------------------------|
+| `verify`           | `docker compose run --rm verify`         | Full verification loop (fmt + clippy + test + release) |
+| `test`             | `docker compose run --rm test`           | Run all tests                            |
+| `test-lib`         | `docker compose run --rm test-lib`       | Unit tests only                          |
+| `test-integration` | `docker compose run --rm test-integration` | Integration tests only                 |
+| `lint`             | `docker compose run --rm lint`           | clippy + fmt check                       |
+| `fmt`              | `docker compose run --rm fmt`            | Auto-format code with rustfmt            |
+| `build`            | `docker compose run --rm build`          | Debug build                              |
+| `release`          | `docker compose run --rm release`        | Release build                            |
+| `shell`            | `docker compose run --rm shell`          | Interactive bash shell                   |
+
+### How It Works
+
+- **Source mounting:** The project directory is bind-mounted into the container at `/app`, so code edits on the host are immediately reflected
+- **Dependency caching:** `cargo-chef` is used in the Dockerfile to cache compiled dependencies in a separate Docker layer — rebuilds after source-only changes are fast
+- **Volume persistence:** Cargo registry, git database, and the `target/` directory are stored in named Docker volumes (`cargo-registry`, `cargo-git`, `cargo-target`), so incremental compilation works across runs
+- **Rust version:** The Dockerfile's `RUST_VERSION` ARG should be kept in sync with `rust-version` in `Cargo.toml`
+
+### When to Use Docker vs Native Cargo
+
+| Scenario                                    | Recommended       |
+|---------------------------------------------|--------------------|
+| Day-to-day development on your own machine  | Native `cargo`     |
+| Verifying Linux-specific behavior           | Docker             |
+| Pre-push CI simulation                      | Docker `verify`    |
+| Debugging a CI failure on Linux             | Docker `shell`     |
+| Quick iteration (edit-compile-test cycle)   | Native `cargo`     |
+| Ensuring no host-specific dependencies leak | Docker             |
+
+### Cleanup
+
+```bash
+# Remove containers and volumes (frees disk space, loses cached builds)
+docker compose down -v
+
+# Rebuild from scratch (e.g., after changing Rust version)
+docker compose build --no-cache
+```
+
+### Rules
+
+- The `RUST_VERSION` ARG in the Dockerfile MUST match the `rust-version` in `Cargo.toml`
+- When bumping `rust-version`, update the Dockerfile ARG in the same commit
+- Docker is an **optional** development tool — native `cargo` commands remain the primary workflow
+- CI uses GitHub Actions (not Docker) — Docker is for local development convenience only
+
+---
+
 ## Code Conventions
 
 ### Rust Style
