@@ -79,7 +79,59 @@ This applies to:
 - Every dependency MUST be pure Rust (no C bindings) unless absolutely unavoidable
 - Minimize dependency count — do not add a crate for something achievable in <50 lines
 
-### Testing
-- Integration tests live in `tests/` with sample files in `tests/fixtures/`
-- Every converter must have tests covering: basic content, tables, edge cases (empty doc, single cell, etc.)
+### Testing — TDD Required
+
+**All features MUST be developed using Test-Driven Development (TDD):**
+1. Write a failing test first that defines the expected behavior
+2. Implement the minimum code to make the test pass
+3. Refactor while keeping tests green
+
+**Unit tests:**
+- Every converter must have unit tests inside the module (`#[cfg(test)] mod tests`)
+- Test individual parsing functions: heading extraction, table parsing, bold/italic detection, image extraction, hyperlink resolution, list parsing, etc.
+- Cover edge cases: empty documents, single-cell tables, missing XML elements, malformed content, deeply nested structures, Unicode/CJK text
+- Markdown utility functions (`markdown.rs`) must be fully unit-tested: table builder, heading formatter, list formatter, text escaping
+
+**Integration tests:**
+- Live in `tests/` with sample files in `tests/fixtures/`
+- Test end-to-end conversion: file in → Markdown out
+- One test file per format minimum (`test_docx.rs`, `test_pptx.rs`, `test_xlsx.rs`, etc.)
 - Test against expected Markdown output patterns, not exact string matches
+- Include a comparison test that verifies anytomd-rs output covers the same content as MarkItDown output for the same input file
+
+**Test fixtures:**
+- Sample documents live in `tests/fixtures/` (committed to the repo)
+- Create minimal but representative test files for each format
+- Include both simple cases (plain text only) and complex cases (tables + images + headings + lists)
+
+**Test commands:**
+```bash
+cargo test              # Run all tests
+cargo test --lib        # Unit tests only
+cargo test --test '*'   # Integration tests only
+```
+
+---
+
+## CI — GitHub Actions
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and kept passing at all times. Every push and pull request must be validated.
+
+**Required CI checks:**
+```yaml
+# The CI workflow must include ALL of the following steps:
+- cargo fmt --check          # Format check — no unformatted code
+- cargo clippy -- -D warnings  # Lint check — zero warnings
+- cargo test                 # All unit + integration tests must pass
+- cargo build --release      # Release build must succeed
+```
+
+**CI matrix:** Run on all three target platforms:
+- `ubuntu-latest`
+- `macos-latest`
+- `windows-latest`
+
+**Rules:**
+- Never merge code that breaks CI
+- If a new converter is added without tests, CI should be considered incomplete — add tests before merging
+- CI must use the latest Rust stable toolchain (`dtolnay/rust-toolchain@stable`)
