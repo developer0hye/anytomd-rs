@@ -12,6 +12,28 @@ See [PRD.md](./PRD.md) for full architecture, format-specific implementation det
 
 ---
 
+## Reference-Driven Development
+
+The original MarkItDown Python source is cloned locally at `reference/markitdown/` for analysis during development. This directory is excluded from Git via `.gitignore`.
+
+**How to use the reference:**
+- Before implementing a converter, **read the corresponding MarkItDown converter** to understand its parsing logic, edge case handling, and output format
+  - Core converters: `reference/markitdown/packages/markitdown/src/markitdown/converters/`
+  - Utility helpers: `reference/markitdown/packages/markitdown/src/markitdown/converter_utils/`
+  - Main engine: `reference/markitdown/packages/markitdown/src/markitdown/_markitdown.py`
+- Identify what content each converter extracts (headings, tables, images, links, metadata, etc.) and ensure the Rust implementation covers the same content
+- Do NOT translate Python code line-by-line — understand the *intent*, then implement idiomatically in Rust
+- Use MarkItDown's test fixtures and expected outputs as additional validation where applicable
+
+**Workflow per converter:**
+1. Read the Python converter (e.g., `_docx_converter.py`)
+2. Note which document elements it extracts and how it formats them
+3. Write Rust tests based on the same expected content coverage
+4. Implement the Rust converter using native crates
+5. Compare output against MarkItDown's output for the same test files to ensure content parity (not exact string match)
+
+---
+
 ## Critical Principle: Native Rust Implementation
 
 This is the single most important rule of this project:
