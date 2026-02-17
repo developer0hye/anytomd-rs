@@ -36,14 +36,21 @@ pub fn convert_file(
 }
 
 /// Convert raw bytes to Markdown with an explicit format extension.
-///
-/// Currently returns `UnsupportedFormat` for all formats — individual converters
-/// will be wired in as they are implemented.
 pub fn convert_bytes(
-    _data: &[u8],
+    data: &[u8],
     extension: &str,
-    _options: &ConversionOptions,
+    options: &ConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
+    use converter::plain_text::PlainTextConverter;
+
+    let converters: Vec<Box<dyn Converter>> = vec![Box::new(PlainTextConverter)];
+
+    for conv in &converters {
+        if conv.can_convert(extension, data) {
+            return conv.convert(data, options);
+        }
+    }
+
     Err(ConvertError::UnsupportedFormat {
         extension: extension.to_string(),
     })
