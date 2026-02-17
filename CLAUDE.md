@@ -52,6 +52,8 @@ If a pure Rust solution does not exist for a format, the correct response is to 
 
 The output does not need to be identical to MarkItDown's Markdown. The goal is **LLM-readable text extraction**, not pixel-perfect Markdown rendering. If an LLM can understand the output, it's good enough. Simpler output that captures the content is always preferred over complex formatting logic.
 
+Text extraction quality must include robust Unicode handling: converters must preserve multilingual content (Korean, Chinese, Japanese, and other scripts) and emoji without corruption.
+
 MarkItDown converts DOCX via a two-step process (DOCX → HTML via mammoth → Markdown via markdownify). anytomd-rs should convert **directly from OOXML XML to Markdown in a single step**. This is faster, simpler, and avoids intermediate representation overhead.
 
 ---
@@ -196,7 +198,7 @@ Follow these steps in order when merging a PR. Do not skip any step.
 **Unit tests:**
 - Every converter must have unit tests inside the module (`#[cfg(test)] mod tests`)
 - Test individual parsing functions: heading extraction, table parsing, bold/italic detection, image extraction, hyperlink resolution, list parsing, etc.
-- Cover edge cases: empty documents, single-cell tables, missing XML elements, malformed content, deeply nested structures, Unicode/CJK text
+- Cover edge cases: empty documents, single-cell tables, missing XML elements, malformed content, deeply nested structures, multilingual Unicode text (Korean/Chinese/Japanese), and emoji
 - Markdown utility functions (`markdown.rs`) must be fully unit-tested: table builder, heading formatter, list formatter, text escaping
 - Every public function and every non-trivial private function must have at least one test
 

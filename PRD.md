@@ -370,6 +370,8 @@ Every dependency must be **pure Rust** (no C bindings). This ensures:
 ### 6.1 General Rules
 
 - UTF-8 encoded output
+- Preserve multilingual Unicode text without corruption (including Korean, Chinese, Japanese, and other non-Latin scripts)
+- Preserve emoji and symbol characters from source content when text is extracted
 - Unix-style line endings (`\n`)
 - Two newlines between major sections
 - Trailing newline at end of document
@@ -457,6 +459,7 @@ Create sample documents for each format in `tests/fixtures/`:
 - `data.csv` — standard CSV with headers
 - `data.json` — nested JSON object
 - `plain.txt` — plain text file
+- Add multilingual fixtures (Korean/Chinese/Japanese + emoji) and verify end-to-end text preservation
 
 ### 8.2 Test Approach
 
