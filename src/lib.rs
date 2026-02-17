@@ -41,9 +41,11 @@ pub fn convert_bytes(
     extension: &str,
     options: &ConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
+    use converter::json_conv::JsonConverter;
     use converter::plain_text::PlainTextConverter;
 
-    let converters: Vec<Box<dyn Converter>> = vec![Box::new(PlainTextConverter)];
+    let converters: Vec<Box<dyn Converter>> =
+        vec![Box::new(JsonConverter), Box::new(PlainTextConverter)];
 
     for conv in &converters {
         if conv.can_convert(extension, data) {

@@ -1,0 +1,14 @@
+{
+  "title": "Sample Document",
+  "version": 1,
+  "tags": ["rust", "markdown", "converter"],
+  "metadata": {
+    "author": "Test Author",
+    "language": "한국어",
+    "emoji": "🚀"
+  },
+  "items": [
+    {"id": 1, "name": "First"},
+    {"id": 2, "name": "Second"}
+  ]
+}
