@@ -1,0 +1,31 @@
+# Build artifacts
+target/
+debug/
+
+# Git
+.git/
+.gitignore
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Reference repos (large, not needed in container)
+reference/
+
+# Documentation (not needed for build)
+*.md
+LICENSE
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Mutation testing output
+**/mutants.out*/
+
+# Claude config
+.claude/

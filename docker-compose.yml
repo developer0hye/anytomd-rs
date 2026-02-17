@@ -1,0 +1,88 @@
+# ============================================================
+# anytomd-rs Docker Compose — Development Tasks
+# ============================================================
+# Run common development tasks in a reproducible Linux container.
+#
+# Usage:
+#   docker compose run --rm test       # Run all tests
+#   docker compose run --rm lint       # clippy + fmt check
+#   docker compose run --rm verify     # Full verification loop
+#   docker compose run --rm build      # Debug build only
+#   docker compose run --rm release    # Release build
+#   docker compose run --rm shell      # Interactive shell
+#
+# First run will be slow (dependency compilation). Subsequent runs
+# reuse the cached layers and cargo registry/target via volumes.
+
+services:
+  # Base service — not run directly, extended by others
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount source so edits on host are reflected immediately
+      - .:/app
+      # Persist cargo registry and git db across runs
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      # Persist target directory for incremental compilation
+      - cargo-target:/app/target
+    working_dir: /app
+
+  # ---- Task services ----
+
+  build:
+    extends: base
+    command: cargo build
+
+  release:
+    extends: base
+    command: cargo build --release
+
+  test:
+    extends: base
+    command: cargo test
+
+  test-lib:
+    extends: base
+    command: cargo test --lib
+
+  test-integration:
+    extends: base
+    command: ["cargo", "test", "--test", "*"]
+
+  lint:
+    extends: base
+    command: >
+      sh -c "cargo fmt --check && cargo clippy -- -D warnings"
+
+  fmt:
+    extends: base
+    command: cargo fmt
+
+  verify:
+    extends: base
+    command: >
+      sh -c "
+        echo '=== Step 1/4: Format check ===' &&
+        cargo fmt --check &&
+        echo '=== Step 2/4: Clippy ===' &&
+        cargo clippy -- -D warnings &&
+        echo '=== Step 3/4: Tests ===' &&
+        cargo test &&
+        echo '=== Step 4/4: Release build ===' &&
+        cargo build --release &&
+        echo '=== All checks passed ==='
+      "
+
+  shell:
+    extends: base
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
