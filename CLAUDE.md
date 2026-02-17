@@ -48,6 +48,16 @@ This applies to:
 
 ---
 
+## Toolchain
+
+- **Before starting any work**, check the latest Rust stable version by searching the web (e.g., "latest Rust stable version") and ensure the project targets it
+- Use the **latest Rust stable** release — update `rust-version` in `Cargo.toml` accordingly
+- Set `rust-version = "<latest>"` in `Cargo.toml` under `[package]` to enforce MSRV
+- Do NOT use nightly-only features — everything must compile on stable
+- Run `rustup update stable` before starting work to ensure the toolchain is current
+
+---
+
 ## Code Conventions
 
 ### Rust Style
