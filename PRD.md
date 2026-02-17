@@ -103,6 +103,28 @@ anytomd-rs/
 ### 3.2 Core Trait
 
 ```rust
+pub enum WarningCode {
+    SkippedElement,
+    UnsupportedFeature,
+    ResourceLimitReached,
+    MalformedSegment,
+}
+
+pub struct ConversionWarning {
+    pub code: WarningCode,
+    pub message: String,
+    pub location: Option<String>,
+}
+
+pub struct ConversionOptions {
+    /// Extract embedded images into `ConversionResult.images`
+    pub extract_images: bool,
+    /// Hard cap for total extracted image bytes per document
+    pub max_total_image_bytes: usize,
+    /// If true, return an error on recoverable parse failures
+    pub strict: bool,
+}
+
 pub struct ConversionResult {
     /// Converted Markdown content
     pub markdown: String,
@@ -110,6 +132,8 @@ pub struct ConversionResult {
     pub title: Option<String>,
     /// Extracted images as (filename, bytes) pairs
     pub images: Vec<(String, Vec<u8>)>,
+    /// Recoverable issues encountered during conversion
+    pub warnings: Vec<ConversionWarning>,
 }
 
 pub trait Converter {
@@ -121,8 +145,12 @@ pub trait Converter {
         self.supported_extensions().contains(&extension)
     }
 
-    /// Convert file bytes to Markdown
-    fn convert(&self, data: &[u8]) -> Result<ConversionResult, ConvertError>;
+    /// Convert file bytes to Markdown with conversion options
+    fn convert(
+        &self,
+        data: &[u8],
+        options: &ConversionOptions,
+    ) -> Result<ConversionResult, ConvertError>;
 }
 ```
 
@@ -130,18 +158,40 @@ pub trait Converter {
 
 ```rust
 // Simple: auto-detect format and convert
-let result = anytomd::convert_file("document.docx")?;
+let result = anytomd::convert_file("document.docx", &ConversionOptions::default())?;
 println!("{}", result.markdown);
 
 // From bytes with explicit format
 let bytes = std::fs::read("document.docx")?;
-let result = anytomd::convert_bytes(&bytes, "docx")?;
+let result = anytomd::convert_bytes(&bytes, "docx", &ConversionOptions::default())?;
 
 // Access extracted images
 for (filename, image_bytes) in &result.images {
     std::fs::write(format!("output/{}", filename), image_bytes)?;
 }
+
+// Inspect recoverable conversion warnings
+for warning in &result.warnings {
+    eprintln!("[{:?}] {}", warning.code, warning.message);
+}
 ```
+
+### 3.4 Package and Crate Naming
+
+- Crates.io package name: `anytomd-rs`
+- Rust library crate name: `anytomd`
+- All API examples use `anytomd::...` import path
+
+### 3.5 Format Detection Precedence
+
+Format detection must be deterministic and follow this order:
+
+1. Magic bytes / file signature (highest priority)
+2. Container introspection (e.g., ZIP internal paths like `word/document.xml`)
+3. File extension
+4. Explicit fallback to plain text (only if all checks fail)
+
+If extension and magic bytes conflict, magic bytes win and a warning is recorded in `ConversionResult.warnings`.
 
 ---
 
@@ -270,9 +320,8 @@ PDF text extraction is significantly harder than OOXML. Options:
 |-------|----------|------|------|
 | `pdf-extract` | Extracts text with layout inference | Good text quality | Larger dependency |
 | `lopdf` | Low-level PDF parsing | Lightweight | Manual text extraction |
-| `pdfium-render` | Google PDFium bindings | Best quality | C dependency (not pure Rust) |
 
-**Decision: Start with `pdf-extract` for P1.** If pure-Rust requirement is strict, fall back to `lopdf` with custom text extraction.
+**Decision: Start with `pdf-extract` for P1.** If quality or maintenance becomes an issue, fall back to `lopdf` with custom text extraction. C-binding options are out of scope.
 
 Scanned PDFs (image-based) cannot be handled without OCR — this is explicitly out of scope. The consuming application should use Gemini/GPT vision for scanned documents.
 
@@ -309,7 +358,7 @@ scraper = "0.21"       # HTML DOM parsing
 
 ### 5.3 Design Principle: Minimal Dependencies
 
-Every dependency must be **pure Rust** (no C bindings) unless absolutely unavoidable (PDF may be an exception). This ensures:
+Every dependency must be **pure Rust** (no C bindings). This ensures:
 - `cargo build` works on all platforms without system library requirements
 - WASM compilation target remains possible
 - No dynamic linking issues
@@ -348,6 +397,11 @@ Images embedded in DOCX/PPTX are extracted as binary data and referenced in Mark
 
 The actual image bytes are available in `ConversionResult.images`. The consuming application decides how to handle them (save to disk, send to LLM, etc.).
 
+To prevent unbounded memory usage on large documents:
+- Image extraction can be disabled via `ConversionOptions.extract_images = false`
+- Total extracted image size must be capped by `ConversionOptions.max_total_image_bytes`
+- If the cap is reached, remaining images are skipped and a warning is appended
+
 ### 6.4 Heading Hierarchy
 
 - DOCX: Derived from paragraph styles (Heading 1 → `#`, Heading 2 → `##`, etc.)
@@ -384,7 +438,9 @@ pub enum ConvertError {
 }
 ```
 
-**Philosophy:** Conversion should be **best-effort**. If a specific element fails to parse (e.g., a corrupted table), log a warning and skip it rather than failing the entire conversion.
+**Philosophy:** Conversion should be **best-effort by default**. If a specific element fails to parse (e.g., a corrupted table), skip it and append a structured warning to `ConversionResult.warnings`.
+
+**Strict mode:** When `ConversionOptions.strict = true`, recoverable parse failures should return `ConvertError` instead of warnings.
 
 ---
 
@@ -406,30 +462,47 @@ Create sample documents for each format in `tests/fixtures/`:
 
 ```rust
 #[test]
-fn test_docx_headings() {
-    let result = anytomd::convert_file("tests/fixtures/simple.docx").unwrap();
-    assert!(result.markdown.contains("# "));
-    assert!(result.markdown.contains("## "));
+fn test_docx_headings_normalized_output() {
+    let result = anytomd::convert_file(
+        "tests/fixtures/simple.docx",
+        &ConversionOptions::default(),
+    )
+    .unwrap();
+    let actual = normalize_markdown(&result.markdown);
+    let expected = include_str!("expected/simple.normalized.md");
+    assert_eq!(actual, expected);
 }
 
 #[test]
-fn test_docx_table() {
-    let result = anytomd::convert_file("tests/fixtures/tables.docx").unwrap();
-    assert!(result.markdown.contains("|"));
-    assert!(result.markdown.contains("|---|"));
+fn test_docx_table_keeps_empty_cells() {
+    let result = anytomd::convert_file(
+        "tests/fixtures/tables.docx",
+        &ConversionOptions::default(),
+    )
+    .unwrap();
+    assert!(result.markdown.contains("| name | value | note |"));
+    assert!(result.markdown.contains("| a | 1 |  |"));
 }
 
 #[test]
-fn test_xlsx_multi_sheet() {
-    let result = anytomd::convert_file("tests/fixtures/data.xlsx").unwrap();
-    assert!(result.markdown.contains("## Sheet1"));
-    assert!(result.markdown.contains("## Sheet2"));
+fn test_resource_limit_adds_warning() {
+    let options = ConversionOptions {
+        max_total_image_bytes: 1024,
+        ..Default::default()
+    };
+    let result = anytomd::convert_file("tests/fixtures/images.docx", &options).unwrap();
+    assert!(result.warnings.iter().any(|w| matches!(w.code, WarningCode::ResourceLimitReached)));
 }
 ```
 
 ### 8.3 Comparison Testing
 
-For validation, compare anytomd-rs output against MarkItDown output on the same input files. The Markdown doesn't need to be identical, but the **extracted text content** should match.
+For validation, compare anytomd-rs output against MarkItDown output on the same input files. Markdown does not need exact string equality, but extracted content parity must be measurable:
+
+- Normalize whitespace and punctuation, then compare token sets
+- Require token recall >= 95% for MVP formats (DOCX/PPTX/XLSX/CSV/JSON/TXT)
+- Compare structural signals (heading count, table count, hyperlink count) with per-format tolerances
+- Add at least one fixture per format where output is manually reviewed and locked as a golden baseline
 
 ---
 
@@ -437,25 +510,30 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 
 ### v0.1.0 — MVP
 - [ ] Project setup (Cargo.toml, CI)
-- [ ] Converter trait + format detection
-- [ ] DOCX converter (paragraphs, headings, bold/italic, tables, images, lists, hyperlinks)
-- [ ] PPTX converter (slides, text, tables, speaker notes, images)
-- [ ] XLSX converter (multi-sheet, all cell types → Markdown tables)
+- [ ] Converter trait + deterministic format detection (magic bytes first)
+- [ ] Conversion options + warning contract (`ConversionOptions`, `ConversionResult.warnings`)
+- [ ] DOCX converter (paragraphs, headings, hyperlinks; best-effort mode)
+- [ ] PPTX converter (slide titles + body text)
+- [ ] XLSX converter (multi-sheet, core cell types → Markdown tables)
 - [ ] CSV converter (→ Markdown table)
 - [ ] JSON converter (→ code block)
 - [ ] Plain text converter (passthrough)
-- [ ] Integration tests with fixture files
+- [ ] Integration tests + normalized golden tests for all P0 formats
 - [ ] README with usage examples
 - [ ] Publish to crates.io
 
 ### v0.2.0 — Core Completeness
+- [ ] DOCX advanced formatting (bold/italic/lists/tables/images)
+- [ ] PPTX advanced content (tables/speaker notes/images)
+- [ ] XLSX formula/date/error cell normalization
 - [ ] PDF converter (text extraction)
 - [ ] HTML converter (→ Markdown)
 - [ ] XLS legacy format support (via calamine)
 - [ ] XML converter (→ code block)
 - [ ] ZIP recursive conversion
-- [ ] Improved table formatting (column alignment)
+- [ ] Improved table formatting (column alignment, escaping)
 - [ ] Encoding detection for non-UTF-8 files
+- [ ] Resource-limit guards (max file size/page count/uncompressed ZIP budget)
 
 ### v0.3.0 — Extended Formats
 - [ ] Image EXIF metadata extraction
@@ -477,17 +555,39 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 |--------|--------------------|--------------------|
 | Runtime | Python 3.10+ | None (native binary) |
 | Install | `pip install markitdown` | `cargo add anytomd-rs` |
-| Binary size impact | ~50MB (PyInstaller) | ~2-5MB (static linked) |
+| Binary size impact | ~50MB (PyInstaller) | Single-digit MB (target/profile dependent) |
 | DOCX approach | DOCX → HTML → MD (2 steps) | DOCX → MD directly (1 step) |
 | PDF approach | pdfminer + pdfplumber | pdf-extract (pure Rust) |
 | XLSX approach | pandas + openpyxl | calamine |
 | LLM features | Built-in (image caption, audio transcription) | Out of scope (library consumer's responsibility) |
 | Cloud integrations | Azure, YouTube, Wikipedia, Bing | None (pure local conversion) |
 | WASM support | No | Possible (P0 deps are all pure Rust) |
-| Cross-platform build | PyInstaller fragility | `cargo build` (just works) |
+| Cross-platform build | PyInstaller fragility | `cargo build` (no external runtime) |
 
 ---
 
-## 11. License
+## 11. Non-Functional Requirements
+
+### 11.1 Performance Targets (P0 formats)
+
+- Convert a 10MB DOCX/PPTX/XLSX document in <= 2 seconds on a modern laptop (single-thread baseline)
+- Keep peak memory usage <= 4x input file size for non-image-heavy documents
+- Keep startup overhead minimal (library-first, no runtime bootstrap)
+
+### 11.2 Safety Limits
+
+- Reject files larger than configurable `max_input_bytes`
+- Abort ZIP-based parsing if uncompressed size exceeds configurable budget
+- Cap parser recursion / nesting depth for XML/HTML
+- Cap PDF page count processed per conversion request
+
+### 11.3 Determinism
+
+- Given identical input bytes and options, output Markdown must be byte-stable
+- Warning ordering must be stable and reproducible across platforms
+
+---
+
+## 12. License
 
 Apache License 2.0 (matching the repository)

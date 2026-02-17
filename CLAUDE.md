@@ -25,12 +25,14 @@ The original MarkItDown Python source is cloned locally at `reference/markitdown
 - Do NOT translate Python code line-by-line — understand the *intent*, then implement idiomatically in Rust
 - Use MarkItDown's test fixtures and expected outputs as additional validation where applicable
 
-**Workflow per converter:**
+**Workflow per converter (integrates with TDD):**
 1. Read the Python converter (e.g., `_docx_converter.py`)
 2. Note which document elements it extracts and how it formats them
-3. Write Rust tests based on the same expected content coverage
-4. Implement the Rust converter using native crates
-5. Compare output against MarkItDown's output for the same test files to ensure content parity (not exact string match)
+3. Create test fixtures for the format (see "Test fixtures" under Testing)
+4. **Write failing Rust tests first** based on the same expected content coverage (TDD red phase)
+5. Implement the Rust converter using native crates to make tests pass (TDD green phase)
+6. Refactor while keeping tests green (TDD refactor phase)
+7. Compare output against MarkItDown's output for the same test files to ensure content parity (not exact string match)
 
 ---
 
@@ -70,13 +72,73 @@ This applies to:
 
 ---
 
+## Git Configuration
+
+- All commits must use the local git config `user.name` and `user.email` for both author and committer. Verify with `git config user.name` and `git config user.email` before committing.
+- All commits must include `Signed-off-by` line to pass DCO check (always use `git commit -s`). The `Signed-off-by` name must match the commit author.
+- The expected git `user.name` is `Yonghye Kwon`. If the local git config `user.name` does not match, you **MUST** ask the user to confirm their identity before the first commit or push in the session. Once confirmed, do not ask again for the rest of the session.
+
+## Branching & PR Workflow
+
+- Always create a new branch before starting any task (never work directly on `main`)
+- **MUST (for PR-bound code changes):** create a worktree first, then create/edit files inside that worktree directory
+- **SHOULD:** avoid leaving code changes in the main repo directory; this prevents untracked-file drift and post-merge pull issues
+- Branch naming convention: `<type>/<short-description>` (e.g., `feat/add-docx-converter`, `fix/table-parsing-bug`, `ci/add-linting`)
+- Once the task is complete, push the branch and create a Pull Request to `main`
+- Each branch should contain a single, focused unit of work
+- Do not start a new task on the same branch — create a new branch for each task
+- **When working on an existing PR** (e.g., fixing issues, adding changes), push commits directly to that PR's branch instead of creating a new PR. Only create a separate PR if explicitly requested. For cross-repository (fork) PRs, add the contributor's fork as a remote (e.g., `git remote add <user> <fork-url>`) and push to that remote's branch.
+- **MUST (for PR branch changes):** use `git worktree` to work on multiple branches simultaneously in separate directories
+  - For local-only cleanup or inspection tasks that do not create PR changes, `git checkout`/`git switch` may be used when explicitly requested
+  - Create a worktree: `git worktree add ../anytomd-rs-<branch-name> -b <type>/<short-description>`
+  - Work inside the worktree directory, not the main repo
+  - **All PR-related commands (`gh pr create`, `gh pr merge`, `gh pr checks`, `git push`, etc.) must be run from inside the worktree directory**, not the main repo directory. Commands like `gh pr create` use the current directory's branch as the head branch — running them from the main repo (on `main`) will fail with "head branch is the same as base branch".
+  - **Do NOT remove a worktree immediately after completing a task.** If you delete the worktree while your working directory is still inside it, all subsequent commands will fail because the path no longer exists. Only remove a worktree after you have confirmed the user wants it removed, or when starting a new task (at which point you will create a new worktree and move into that directory).
+  - **When removing a worktree, you MUST return to the main repo directory first.** You cannot remove a worktree while your working directory is inside it. Always run: `cd /Users/yhkwon/Documents/Projects/anytomd-rs && git worktree remove ../anytomd-rs-<branch-name>`
+
+### PR Merge Procedure
+
+Follow these steps in order when merging a PR. Do not skip any step.
+
+**Step 1. Review PR description**
+- If the PR description is empty or lacks detail, rewrite it using `gh pr edit <number> --body "..."`.
+- A good PR description includes: what changed and why, a list of key changes, and relevant context (e.g., related issues).
+- Review the actual commits and code diff to write an accurate description.
+
+**Step 2. Search for related issues**
+- Search for related issues using `gh issue list` and the PR's topic/keywords.
+- If related issues exist, mention them in the PR description (e.g., "Related: #70, #55").
+- Do not use auto-close keywords (`Closes`, `Fixes`) unless explicitly instructed — only reference issues for context. Only mention issues that are directly related to the PR's changes.
+
+**Step 3. Check for conflicts with main**
+- Check if `main` has advanced since the PR was created.
+- If so, run `git merge-tree` to check for conflicts. If conflicts exist, rebase or merge `main` into the PR branch to resolve them, then push again.
+
+**Step 4. Wait for CI checks to pass**
+- Run `gh pr checks <number> --watch` and wait for all CI checks to pass.
+- If CI fails, do **not** merge. Report the failure and stop.
+
+**Step 5. Merge the PR**
+- **NEVER use the `--delete-branch` flag.** The worktree is still using the branch, so `--delete-branch` attempts to checkout `main` locally, which fails because `main` is already checked out in the main repo directory.
+- Merge command: `gh pr merge <number> --merge`
+
+**Step 6. Update local main**
+- Move to the main repo directory and run `git pull`.
+  ```bash
+  cd /Users/yhkwon/Documents/Projects/anytomd-rs && git pull
+  ```
+- New worktrees branch off local `main`, so skipping this step causes missing commits in new branches.
+
+---
+
 ## Toolchain
 
-- **Before starting any work**, check the latest Rust stable version by searching the web (e.g., "latest Rust stable version") and ensure the project targets it
-- Use the **latest Rust stable** release — update `rust-version` in `Cargo.toml` accordingly
-- Set `rust-version = "<latest>"` in `Cargo.toml` under `[package]` to enforce MSRV
+- Use the Rust version pinned by `rust-version` in `Cargo.toml` as the project MSRV contract
+- Keep CI and local development on stable Rust compatible with that pinned version
+- Do not bump `rust-version` in unrelated feature PRs
+- Review new Rust stable releases on a regular cadence (for example monthly) and bump `rust-version` only in a dedicated chore PR
 - Do NOT use nightly-only features — everything must compile on stable
-- Run `rustup update stable` before starting work to ensure the toolchain is current
+- `rustup update stable` is optional local maintenance, not a prerequisite for every task
 
 ---
 
@@ -87,18 +149,20 @@ This applies to:
 - Use `thiserror` for error types — see `ConvertError` in PRD Section 7
 - Prefer returning `Result<T, ConvertError>` over panicking
 - Conversion should be **best-effort**: if a single element (e.g., one corrupted table) fails to parse, skip it and continue — do not fail the entire document
+- Best-effort behavior must be observable: append structured warnings to `ConversionResult.warnings` instead of silently dropping parse failures
 
 ### Crate Structure
 - `src/lib.rs` — public API (`convert_file`, `convert_bytes`)
 - `src/converter/` — one module per format (`docx.rs`, `pptx.rs`, `xlsx.rs`, ...)
 - Each converter implements the `Converter` trait (see PRD Section 3.2)
+- Public API must include conversion options (resource limits, strict mode) and warning output
 - `src/markdown.rs` — shared Markdown generation utilities (table builder, heading formatter)
 - `src/detection.rs` — file format detection by extension and magic bytes
 - `src/error.rs` — `ConvertError` enum
 
 ### Dependencies
 - MVP dependencies: `zip`, `quick-xml`, `calamine`, `csv`, `serde_json`, `thiserror`
-- Every dependency MUST be pure Rust (no C bindings) unless absolutely unavoidable
+- Every dependency MUST be pure Rust (no C bindings)
 - Minimize dependency count — do not add a crate for something achievable in <50 lines
 
 ### Testing — TDD Required
@@ -108,23 +172,55 @@ This applies to:
 2. Implement the minimum code to make the test pass
 3. Refactor while keeping tests green
 
+**Bug fixes MUST also follow TDD:**
+1. Write a failing test that reproduces the bug
+2. Confirm the test fails with the current code
+3. Fix the bug to make the test pass
+4. Never fix a bug without a regression test
+
+**Test integrity rules:**
+- NEVER delete or modify an existing passing test to make code "pass" — fix the code instead
+- NEVER use `#[ignore]` to skip failing tests as a workaround — either fix the test or fix the code
+- If a test is genuinely obsolete (e.g., API was intentionally redesigned), document the reason in the commit message when removing it
+
+**Test naming convention:**
+- Use descriptive snake_case names that read as behavior specifications
+- Pattern: `test_<what>_<condition>_<expected>` or `test_<what>_<scenario>`
+- Examples:
+  - `test_heading_extraction_h1_through_h6`
+  - `test_table_parsing_empty_cells_preserved`
+  - `test_bold_and_italic_nested`
+  - `test_convert_file_nonexistent_path_returns_error`
+  - `test_docx_unicode_cjk_text`
+
 **Unit tests:**
 - Every converter must have unit tests inside the module (`#[cfg(test)] mod tests`)
 - Test individual parsing functions: heading extraction, table parsing, bold/italic detection, image extraction, hyperlink resolution, list parsing, etc.
 - Cover edge cases: empty documents, single-cell tables, missing XML elements, malformed content, deeply nested structures, Unicode/CJK text
 - Markdown utility functions (`markdown.rs`) must be fully unit-tested: table builder, heading formatter, list formatter, text escaping
+- Every public function and every non-trivial private function must have at least one test
 
 **Integration tests:**
 - Live in `tests/` with sample files in `tests/fixtures/`
 - Test end-to-end conversion: file in → Markdown out
 - One test file per format minimum (`test_docx.rs`, `test_pptx.rs`, `test_xlsx.rs`, etc.)
-- Test against expected Markdown output patterns, not exact string matches
-- Include a comparison test that verifies anytomd-rs output covers the same content as MarkItDown output for the same input file
+- Include golden tests for at least one representative fixture per format:
+  - Golden files live in `tests/fixtures/expected/` (e.g., `tests/fixtures/expected/sample.docx.md`)
+  - Before comparison, normalize both actual and expected output: collapse consecutive whitespace/newlines, trim lines, strip trailing newline — so that insignificant formatting differences do not cause false failures
+  - After normalization, compare with exact string match (`assert_eq!`)
+  - When a converter's output intentionally changes, update the golden file and document the reason in the commit message
+- For content coverage tests (separate from golden tests), use pattern matching (`contains`, regex) to verify that key content elements (headings, table data, links, etc.) are present — this is more resilient to formatting changes than exact matching
+- Include a comparison test that verifies anytomd-rs output covers the same content as MarkItDown output for the same input file (use content coverage assertions, not exact match)
 
 **Test fixtures:**
 - Sample documents live in `tests/fixtures/` (committed to the repo)
 - Create minimal but representative test files for each format
 - Include both simple cases (plain text only) and complex cases (tables + images + headings + lists)
+- **How to create fixtures for binary formats (DOCX, PPTX, XLSX):**
+  - DOCX/PPTX: Build programmatically in Rust test setup using `zip` + XML templates, or create manually in LibreOffice/Google Docs and export — commit the resulting files
+  - XLSX: Create manually in LibreOffice/Google Sheets and export, or use a Python one-liner with `openpyxl` to generate — commit the resulting files
+  - Keep fixtures as small as possible — only include the elements needed for the specific test
+  - Document what each fixture contains in a comment at the top of the test that uses it
 
 **Test commands:**
 ```bash
@@ -137,7 +233,9 @@ cargo test --test '*'   # Integration tests only
 
 ## Development Workflow — Build-Test-Verify Loop
 
-**After every minimal unit of work is completed, you MUST run the full verification loop before moving on to the next task.**
+**For code changes in `src/` or `tests/`, run the full verification loop before moving to the next task.**
+
+For documentation-only changes (`*.md`), running the full Rust loop is recommended but optional.
 
 A "minimal unit of work" includes but is not limited to:
 - Implementing a single parsing function (e.g., heading extraction from DOCX)
@@ -157,6 +255,7 @@ cargo clippy -- -D warnings  # 3. Any lint warnings?
 - Do NOT proceed to the next task if any step in the loop fails
 - Fix the failure first, re-run the full loop, then continue
 - If a new test was written (TDD), confirm it fails before implementation, then confirm it passes after
+- Do NOT delete, `#[ignore]`, or weaken tests to make the loop pass — fix the code
 - After completing a full converter (e.g., entire DOCX support), also run `cargo fmt --check` and `cargo build --release` before considering it done
 - This loop is non-negotiable — skipping it to "save time" leads to cascading failures
 
@@ -183,4 +282,4 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 **Rules:**
 - Never merge code that breaks CI
 - If a new converter is added without tests, CI should be considered incomplete — add tests before merging
-- CI must use the latest Rust stable toolchain (`dtolnay/rust-toolchain@stable`)
+- CI must use a stable Rust toolchain compatible with `rust-version` in `Cargo.toml`
