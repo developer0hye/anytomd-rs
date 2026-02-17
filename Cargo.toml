@@ -1,15 +1,11 @@
 [package]
-name = "anytomd-rs"
+name = "anytomd"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
 description = "Pure Rust library that converts various document formats into Markdown"
-repository = "https://github.com/yhkwon6/anytomd-rs"
-
-[lib]
-name = "anytomd"
-path = "src/lib.rs"
+repository = "https://github.com/developer0hye/anytomd-rs"
 
 [dependencies]
 zip = "2"
