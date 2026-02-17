@@ -113,6 +113,33 @@ cargo test --test '*'   # Integration tests only
 
 ---
 
+## Development Workflow — Build-Test-Verify Loop
+
+**After every minimal unit of work is completed, you MUST run the full verification loop before moving on to the next task.**
+
+A "minimal unit of work" includes but is not limited to:
+- Implementing a single parsing function (e.g., heading extraction from DOCX)
+- Adding a new converter module
+- Modifying the `Converter` trait or public API
+- Adding or changing a dependency
+- Refactoring existing code
+
+**Verification loop (run every time):**
+```bash
+cargo build              # 1. Does it compile?
+cargo test               # 2. Do all tests pass (including pre-existing ones)?
+cargo clippy -- -D warnings  # 3. Any lint warnings?
+```
+
+**Rules:**
+- Do NOT proceed to the next task if any step in the loop fails
+- Fix the failure first, re-run the full loop, then continue
+- If a new test was written (TDD), confirm it fails before implementation, then confirm it passes after
+- After completing a full converter (e.g., entire DOCX support), also run `cargo fmt --check` and `cargo build --release` before considering it done
+- This loop is non-negotiable — skipping it to "save time" leads to cascading failures
+
+---
+
 ## CI — GitHub Actions
 
 A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and kept passing at all times. Every push and pull request must be validated.
