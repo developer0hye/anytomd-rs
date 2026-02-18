@@ -70,6 +70,45 @@ anytomd-rs supports optional LLM-based image description via the `ImageDescriber
 - The `ImageDescriber` trait is provider-agnostic: Gemini is the default, but any LLM backend can be used
 - **API key management:** The `ImageDescriber` trait has no key concept. The built-in `GeminiDescriber` accepts a key via struct field (`new(api_key)`) and also provides an env-var fallback (`from_env()` reads `GEMINI_API_KEY`). Never hardcode, log, or persist API keys in library code.
 
+### CI Gemini Integration Testing
+
+CI runs real Gemini API calls to verify end-to-end image description. To minimize cost, CI uses a cheaper model than production.
+
+| Context | Model | Rationale |
+|---------|-------|-----------|
+| Production / library default | `gemini-3-flash-preview` | Best quality for real-world usage |
+| CI integration tests | `gemini-2.5-flash-lite` | Cheapest model; sufficient for verifying API integration works |
+
+**Trigger policy — who can run Gemini tests:**
+
+To prevent abuse (malicious PRs draining API quota), Gemini CI tests do NOT run on every PR. The trigger rules are:
+
+| Event | Gemini tests? | Why |
+|-------|---------------|-----|
+| `push` (any branch) | **Yes, automatically** | Only repo owner/collaborators can push — trusted by definition |
+| `pull_request` (default) | **No** | External contributors can open PRs freely — must be gated |
+| `pull_request` with `ci:gemini` label | **Yes** | Owner explicitly approved this PR for Gemini testing |
+
+**Workflow:**
+1. An external PR is opened → basic CI runs (fmt, clippy, tests, release build) — no Gemini
+2. Owner reviews the code for safety (no secret exfiltration, no malicious test modifications)
+3. Owner adds the **`ci:gemini`** label to the PR → Gemini integration tests run
+4. Owner's own pushes (branches, PRs, merges to main) → Gemini tests always run automatically
+
+**Implementation notes:**
+- The `GEMINI_API_KEY` secret is stored as a **GitHub Actions repository secret**
+- The Gemini job uses a condition like: `if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:gemini')`
+- For fork PRs with the `ci:gemini` label, use `pull_request_target` event (which can access secrets) with `ref: ${{ github.event.pull_request.head.sha }}` — but **only after code review**, since this runs untrusted code with secret access
+- Tests use `GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite")` to override the default model
+- CI tests verify that the API returns a non-empty description without errors — they do NOT assert on the content of the description (LLM output is non-deterministic)
+
+**Rules:**
+- **Never hardcode API keys** in CI workflow files, test code, or any committed file
+- CI Gemini tests must be **additive** — all existing tests (unit + integration with mock describers) must continue to pass without the `GEMINI_API_KEY` secret
+- If a CI Gemini test fails due to API rate limits or transient errors, it should NOT block the overall CI pipeline — mark these tests as allowed-to-fail or use retry logic
+- When adding new CI Gemini tests, always test with `gemini-2.5-flash-lite` — never use the production model in CI
+- **Never add the `ci:gemini` label without reviewing the PR diff first** — the label grants secret access to the PR's code
+
 ---
 
 ## Language Rules
@@ -385,6 +424,16 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - cargo build --release      # Release build must succeed
 ```
 
+**Gemini feature CI checks (runs on `push` or `ci:gemini` labeled PRs only):**
+```yaml
+# Triggered by: push events (owner's own work) OR PRs with the ci:gemini label.
+# Never runs on unlabeled external PRs.
+# Uses gemini-2.5-flash-lite to minimize cost.
+- cargo test --features gemini                      # All tests with gemini feature
+- cargo clippy --features gemini -- -D warnings     # Lint with gemini feature
+- cargo test --features gemini --test test_gemini_live  # Live API integration test (allowed-to-fail)
+```
+
 **CI matrix:** Run on all three target platforms:
 - `ubuntu-latest`
 - `macos-latest`
@@ -394,3 +443,5 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - Never merge code that breaks CI
 - If a new converter is added without tests, CI should be considered incomplete — add tests before merging
 - CI must use a stable Rust toolchain compatible with `rust-version` in `Cargo.toml`
+- Gemini live API tests are **optional** — they should not block merging if they fail due to transient API issues. All other CI steps (fmt, clippy, unit tests, mock-based integration tests) remain mandatory.
+- The `ci:gemini` label must only be added after reviewing the PR diff — it grants the PR access to the `GEMINI_API_KEY` secret

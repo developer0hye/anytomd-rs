@@ -388,6 +388,18 @@ impl GeminiDescriber {
 - **Environment variable fallback** (`from_env`): Reads `GEMINI_API_KEY` from the environment. Convenient for CLI usage and examples.
 - The library must **never** hardcode, log, or persist API keys.
 
+**Model selection by context:**
+
+| Context | Model | Rationale |
+|---------|-------|-----------|
+| Production / library default | `gemini-3-flash-preview` | Best quality for real-world image description |
+| CI integration tests | `gemini-2.5-flash-lite` | Lowest cost; sufficient to verify API integration works end-to-end |
+
+The `GeminiDescriber` must support model override via `with_model(api_key, model_name)` so that CI can use a different model without changing library defaults. CI tests should:
+- Only assert that the API returns a non-empty string (LLM output is non-deterministic)
+- Be conditional on the `GEMINI_API_KEY` secret being available
+- Be marked as allowed-to-fail to avoid blocking merges on transient API errors
+
 ---
 
 ## 5. Dependencies
@@ -561,6 +573,48 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 - Require token recall >= 95% for MVP formats (DOCX/PPTX/XLSX/CSV/JSON/TXT)
 - Compare structural signals (heading count, table count, hyperlink count) with per-format tolerances
 - Add at least one fixture per format where output is manually reviewed and locked as a golden baseline
+
+### 8.4 CI Gemini Live API Tests
+
+CI includes optional live Gemini API integration tests that verify the `GeminiDescriber` works end-to-end with a real API call.
+
+**Trigger policy:**
+
+Gemini tests consume real API quota, so they are gated to prevent abuse from external PRs:
+
+| CI trigger | Gemini tests run? | Reason |
+|------------|-------------------|--------|
+| `push` (any branch) | Yes, automatically | Only repo owner/collaborators can push |
+| `pull_request` (default) | No | External PRs are untrusted — must be gated |
+| `pull_request` with `ci:gemini` label | Yes | Owner explicitly approved after code review |
+
+The owner must **review the PR diff before adding the `ci:gemini` label** — the label grants the PR's code access to the `GEMINI_API_KEY` secret.
+
+**Structure:**
+- Live tests live in `tests/test_gemini_live.rs` (or similar), gated behind the `gemini` feature
+- Each test reads the `GEMINI_API_KEY` environment variable — if absent, the test is skipped (not failed)
+- Tests use model `gemini-2.5-flash-lite` to minimize API cost
+- Assertions check that the API returns a non-empty description string — they do NOT check the content (LLM output is non-deterministic)
+- Live tests are marked as allowed-to-fail in CI to avoid blocking merges on transient API issues (rate limits, outages)
+
+**Example test pattern:**
+```rust
+#[test]
+fn test_gemini_live_describe_image() {
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            eprintln!("GEMINI_API_KEY not set, skipping live test");
+            return;
+        }
+    };
+    let describer = GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite");
+    let image_bytes = include_bytes!("fixtures/sample_image.png");
+    let result = describer.describe(image_bytes, "image/png", "Describe this image.");
+    assert!(result.is_ok());
+    assert!(!result.unwrap().is_empty());
+}
+```
 
 ---
 
