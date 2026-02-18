@@ -14,8 +14,7 @@ impl Converter for CsvConverter {
         data: &[u8],
         _options: &ConversionOptions,
     ) -> Result<ConversionResult, ConvertError> {
-        let text = String::from_utf8(data.to_vec())?;
-        let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        let (text, encoding_warning) = super::decode_text(data);
 
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(false)
@@ -64,8 +63,14 @@ impl Converter for CsvConverter {
             .collect();
         let markdown = build_table(&header_refs, &row_refs);
 
+        let mut warnings = Vec::new();
+        if let Some(w) = encoding_warning {
+            warnings.push(w);
+        }
+
         Ok(ConversionResult {
             markdown,
+            warnings,
             ..Default::default()
         })
     }
@@ -203,10 +208,14 @@ mod tests {
     }
 
     #[test]
-    fn test_csv_invalid_utf8_returns_error() {
+    fn test_csv_non_utf8_decoded_with_warning() {
         let converter = CsvConverter;
-        let input = vec![0xFF, 0xFE];
-        let result = converter.convert(&input, &ConversionOptions::default());
-        assert!(result.is_err());
+        // Windows-1252 encoded CSV
+        let input = b"Name,City\nAlice,Montr\xe9al\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.markdown.contains("Montr\u{00e9}al"));
+        assert!(!result.warnings.is_empty());
     }
 }

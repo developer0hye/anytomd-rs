@@ -16,13 +16,14 @@ impl Converter for PlainTextConverter {
         data: &[u8],
         _options: &ConversionOptions,
     ) -> Result<ConversionResult, ConvertError> {
-        let text = String::from_utf8(data.to_vec())?;
-
-        // Strip UTF-8 BOM if present
-        let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
-
+        let (text, warning) = super::decode_text(data);
+        let mut warnings = Vec::new();
+        if let Some(w) = warning {
+            warnings.push(w);
+        }
         Ok(ConversionResult {
-            markdown: text.to_string(),
+            markdown: text,
+            warnings,
             ..Default::default()
         })
     }
@@ -93,12 +94,43 @@ mod tests {
     }
 
     #[test]
-    fn test_plain_text_invalid_utf8_returns_error() {
+    fn test_plain_text_non_utf8_decoded_with_warning() {
         let converter = PlainTextConverter;
-        let input = vec![0xFF, 0xFE, 0x00];
-        let result = converter.convert(&input, &ConversionOptions::default());
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ConvertError::Utf8Error(_)));
+        // Windows-1252 encoded: "café" with é = 0xE9
+        let input = b"caf\xe9";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.markdown.contains("café"));
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(
+            result.warnings[0].code,
+            crate::converter::WarningCode::UnsupportedFeature
+        );
+    }
+
+    #[test]
+    fn test_plain_text_windows_1252_decoded() {
+        let converter = PlainTextConverter;
+        // "über" with ü = 0xFC in Windows-1252
+        let input = b"\xfcber";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.markdown.contains("\u{00fc}ber"));
+        assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_plain_text_utf16_le_decoded() {
+        let converter = PlainTextConverter;
+        // UTF-16 LE BOM + "Hi"
+        let input: Vec<u8> = vec![0xFF, 0xFE, b'H', 0x00, b'i', 0x00];
+        let result = converter
+            .convert(&input, &ConversionOptions::default())
+            .unwrap();
+        assert_eq!(result.markdown, "Hi");
+        assert!(!result.warnings.is_empty());
     }
 
     #[test]
