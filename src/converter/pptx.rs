@@ -984,7 +984,9 @@ impl Converter for PptxConverter {
             };
 
             // Resolve image filenames and optionally extract image data
+            let need_image_bytes = options.extract_images || options.image_describer.is_some();
             let mut image_filenames: HashMap<String, String> = HashMap::new();
+            let mut slide_image_data: Vec<(String, Vec<u8>)> = Vec::new();
             for shape in &shapes {
                 if let ShapeContent::Image { rel_id, .. } = shape {
                     if let Some(rel) = slide_rels.get(rel_id) {
@@ -992,14 +994,16 @@ impl Converter for PptxConverter {
                         let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
                         image_filenames.insert(rel_id.clone(), filename.to_string());
 
-                        // Extract image data if requested
-                        if options.extract_images
-                            && total_image_bytes < options.max_total_image_bytes
-                        {
+                        if need_image_bytes && total_image_bytes < options.max_total_image_bytes {
                             if let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path) {
                                 total_image_bytes += img_data.len();
                                 if total_image_bytes <= options.max_total_image_bytes {
-                                    images.push((filename.to_string(), img_data));
+                                    if options.extract_images {
+                                        images.push((filename.to_string(), img_data.clone()));
+                                    }
+                                    if options.image_describer.is_some() {
+                                        slide_image_data.push((filename.to_string(), img_data));
+                                    }
                                 } else {
                                     warnings.push(ConversionWarning {
                                         code: WarningCode::ResourceLimitReached,
@@ -1027,7 +1031,46 @@ impl Converter for PptxConverter {
                 });
             }
 
-            let slide_md = render_slide(slide_info.number, &shapes, &notes, &image_filenames);
+            let mut slide_md = render_slide(slide_info.number, &shapes, &notes, &image_filenames);
+
+            // Generate image descriptions if describer is set
+            if let Some(ref describer) = options.image_describer {
+                for (filename, img_data) in &slide_image_data {
+                    let mime = crate::converter::mime_from_image(filename, img_data);
+                    let prompt = "Describe this image concisely for use as alt text.";
+                    match describer.describe(img_data, mime, prompt) {
+                        Ok(description) => {
+                            let pattern = format!("]({})", filename);
+                            let mut result = String::new();
+                            let mut remaining = slide_md.as_str();
+                            while let Some(pos) = remaining.find(&pattern) {
+                                let before = &remaining[..pos];
+                                if let Some(bracket_pos) = before.rfind("![") {
+                                    result.push_str(&remaining[..bracket_pos]);
+                                    result.push_str(&format!("![{}]({})", description, filename));
+                                    remaining = &remaining[pos + pattern.len()..];
+                                } else {
+                                    result.push_str(&remaining[..pos + pattern.len()]);
+                                    remaining = &remaining[pos + pattern.len()..];
+                                }
+                            }
+                            result.push_str(remaining);
+                            slide_md = result;
+                        }
+                        Err(e) => {
+                            warnings.push(ConversionWarning {
+                                code: WarningCode::SkippedElement,
+                                message: format!(
+                                    "image description failed for '{}': {}",
+                                    filename, e
+                                ),
+                                location: Some(filename.clone()),
+                            });
+                        }
+                    }
+                }
+            }
+
             slide_markdowns.push(slide_md);
         }
 
@@ -1729,5 +1772,207 @@ mod tests {
             ShapeContent::Body(text) => assert!(text.contains("Line one\nLine two")),
             other => panic!("expected Body, got {:?}", other),
         }
+    }
+
+    // ---- Image describer tests ----
+
+    use crate::converter::ImageDescriber;
+    use std::sync::Arc;
+
+    struct MockDescriber {
+        description: String,
+    }
+
+    impl ImageDescriber for MockDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Ok(self.description.clone())
+        }
+    }
+
+    struct FailingDescriber;
+
+    impl ImageDescriber for FailingDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Err(ConvertError::ImageDescriptionError {
+                reason: "API error".to_string(),
+            })
+        }
+    }
+
+    /// Build a PPTX with actual image data embedded in the ZIP for describer tests.
+    fn build_test_pptx_with_image_data(
+        slides: &[TestSlide],
+        image_data: &[(&str, &[u8])], // (path in zip, data)
+    ) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let mut zip = ZipWriter::new(Cursor::new(buf));
+        let opts = SimpleFileOptions::default();
+
+        let mut ct = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#);
+        ct.push_str(
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
+        );
+        ct.push_str(
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
+        );
+        ct.push_str(r#"<Default Extension="xml" ContentType="application/xml"/>"#);
+        ct.push_str(r#"<Default Extension="png" ContentType="image/png"/>"#);
+        ct.push_str("</Types>");
+        zip.start_file("[Content_Types].xml", opts).unwrap();
+        zip.write_all(ct.as_bytes()).unwrap();
+
+        let mut pres_xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst>"#,
+        );
+        let mut pres_rels_xml = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        );
+
+        for (i, slide) in slides.iter().enumerate() {
+            let slide_num = i + 1;
+            let rid = format!("rId{slide_num}");
+            let slide_id = 256 + i;
+
+            pres_xml.push_str(&format!(r#"<p:sldId id="{slide_id}" r:id="{rid}"/>"#));
+            pres_rels_xml.push_str(&format!(
+                r#"<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{slide_num}.xml"/>"#
+            ));
+
+            let slide_xml = build_slide_xml(slide);
+            zip.start_file(format!("ppt/slides/slide{slide_num}.xml"), opts)
+                .unwrap();
+            zip.write_all(slide_xml.as_bytes()).unwrap();
+
+            if slide.notes.is_some() || !slide.images.is_empty() {
+                let mut slide_rels = String::from(
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+                );
+
+                if slide.notes.is_some() {
+                    slide_rels.push_str(&format!(
+                        r#"<Relationship Id="rIdNotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide{slide_num}.xml"/>"#
+                    ));
+                }
+
+                for (img_idx, _) in slide.images.iter().enumerate() {
+                    let img_rid = format!("rIdImg{}", img_idx + 1);
+                    slide_rels.push_str(&format!(
+                        r#"<Relationship Id="{img_rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image{}.png"/>"#,
+                        img_idx + 1
+                    ));
+                }
+
+                slide_rels.push_str("</Relationships>");
+                zip.start_file(format!("ppt/slides/_rels/slide{slide_num}.xml.rels"), opts)
+                    .unwrap();
+                zip.write_all(slide_rels.as_bytes()).unwrap();
+            }
+
+            if let Some(notes_text) = slide.notes {
+                let notes_xml = build_notes_xml(notes_text);
+                zip.start_file(format!("ppt/notesSlides/notesSlide{slide_num}.xml"), opts)
+                    .unwrap();
+                zip.write_all(notes_xml.as_bytes()).unwrap();
+            }
+        }
+
+        pres_xml.push_str("</p:sldIdLst></p:presentation>");
+        pres_rels_xml.push_str("</Relationships>");
+
+        zip.start_file("ppt/presentation.xml", opts).unwrap();
+        zip.write_all(pres_xml.as_bytes()).unwrap();
+
+        zip.start_file("ppt/_rels/presentation.xml.rels", opts)
+            .unwrap();
+        zip.write_all(pres_rels_xml.as_bytes()).unwrap();
+
+        // Add image files
+        for (path, data) in image_data {
+            zip.start_file(path.to_string(), opts).unwrap();
+            zip.write_all(data).unwrap();
+        }
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn test_pptx_image_describer_replaces_alt_text() {
+        let data = build_test_pptx_with_image_data(
+            &[TestSlide {
+                title: Some("Slide with Image"),
+                body_texts: vec![],
+                notes: None,
+                table: None,
+                images: vec!["rIdImg1"],
+                image_alt_texts: vec![None],
+            }],
+            &[("ppt/media/image1.png", b"fake-png-data")],
+        );
+
+        let converter = PptxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "A diagram showing data flow".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![A diagram showing data flow](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(result.images.is_empty());
+    }
+
+    #[test]
+    fn test_pptx_image_describer_error_keeps_original_alt() {
+        let data = build_test_pptx_with_image_data(
+            &[TestSlide {
+                title: Some("Slide"),
+                body_texts: vec![],
+                notes: None,
+                table: None,
+                images: vec!["rIdImg1"],
+                image_alt_texts: vec![Some("Original description")],
+            }],
+            &[("ppt/media/image1.png", b"fake-png-data")],
+        );
+
+        let converter = PptxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(FailingDescriber)),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![Original description](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::SkippedElement
+                && w.message.contains("image description failed")),);
     }
 }

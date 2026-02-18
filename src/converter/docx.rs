@@ -914,9 +914,11 @@ impl Converter for DocxConverter {
         let (markdown, title, mut warnings) =
             parse_document(&document_xml, &styles, &relationships, &numbering);
 
-        // 5. Extract embedded images if requested
+        // 5. Extract embedded images if requested or if describer needs them
+        let need_image_bytes = options.extract_images || options.image_describer.is_some();
         let mut images: Vec<(String, Vec<u8>)> = Vec::new();
-        if options.extract_images {
+        let mut image_data_for_describer: Vec<(String, Vec<u8>)> = Vec::new();
+        if need_image_bytes {
             let mut total_image_bytes: usize = 0;
             for rel in relationships.values() {
                 if !rel.rel_type.contains("image") {
@@ -935,7 +937,12 @@ impl Converter for DocxConverter {
                             .next()
                             .unwrap_or(&rel.target)
                             .to_string();
-                        images.push((filename, img_data));
+                        if options.extract_images {
+                            images.push((filename.clone(), img_data.clone()));
+                        }
+                        if options.image_describer.is_some() {
+                            image_data_for_describer.push((filename, img_data));
+                        }
                     } else {
                         warnings.push(ConversionWarning {
                             code: WarningCode::ResourceLimitReached,
@@ -944,6 +951,44 @@ impl Converter for DocxConverter {
                                 options.max_total_image_bytes
                             ),
                             location: Some(image_path),
+                        });
+                    }
+                }
+            }
+        }
+
+        // 6. Generate image descriptions if describer is set
+        let mut markdown = markdown;
+        if let Some(ref describer) = options.image_describer {
+            for (filename, img_data) in &image_data_for_describer {
+                let mime = crate::converter::mime_from_image(filename, img_data);
+                let prompt = "Describe this image concisely for use as alt text.";
+                match describer.describe(img_data, mime, prompt) {
+                    Ok(description) => {
+                        // Replace all occurrences of ![...](filename) with ![description](filename)
+                        let pattern = format!("]({})", filename);
+                        let mut result = String::new();
+                        let mut remaining = markdown.as_str();
+                        while let Some(pos) = remaining.find(&pattern) {
+                            // Find the opening ![
+                            let before = &remaining[..pos];
+                            if let Some(bracket_pos) = before.rfind("![") {
+                                result.push_str(&remaining[..bracket_pos]);
+                                result.push_str(&format!("![{}]({})", description, filename));
+                                remaining = &remaining[pos + pattern.len()..];
+                            } else {
+                                result.push_str(&remaining[..pos + pattern.len()]);
+                                remaining = &remaining[pos + pattern.len()..];
+                            }
+                        }
+                        result.push_str(remaining);
+                        markdown = result;
+                    }
+                    Err(e) => {
+                        warnings.push(ConversionWarning {
+                            code: WarningCode::SkippedElement,
+                            message: format!("image description failed for '{}': {}", filename, e),
+                            location: Some(filename.clone()),
                         });
                     }
                 }
@@ -1751,6 +1796,118 @@ mod tests {
                 .any(|w| w.code == WarningCode::ResourceLimitReached),
             "expected ResourceLimitReached warning, got: {:?}",
             result.warnings
+        );
+    }
+
+    // ---- Image describer tests ----
+
+    use crate::converter::ImageDescriber;
+    use std::sync::Arc;
+
+    struct MockDescriber {
+        description: String,
+    }
+
+    impl ImageDescriber for MockDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Ok(self.description.clone())
+        }
+    }
+
+    struct FailingDescriber;
+
+    impl ImageDescriber for FailingDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Err(ConvertError::ImageDescriptionError {
+                reason: "API error".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn test_docx_image_describer_replaces_alt_text() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr=""/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "A beautiful sunset over the ocean".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![A beautiful sunset over the ocean](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Images should not be in result.images since extract_images is false
+        assert!(result.images.is_empty());
+    }
+
+    #[test]
+    fn test_docx_image_describer_with_extract_images() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr=""/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "Described image".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(result.markdown.contains("![Described image](image1.png)"));
+        assert!(!result.images.is_empty());
+    }
+
+    #[test]
+    fn test_docx_image_describer_error_keeps_original_alt() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Original alt"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(FailingDescriber)),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result.markdown.contains("![Original alt](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::SkippedElement
+                    && w.message.contains("image description failed")),
+            "expected SkippedElement warning for image description failure"
         );
     }
 }

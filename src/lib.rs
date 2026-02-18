@@ -5,9 +5,14 @@ pub mod markdown;
 pub(crate) mod zip_utils;
 
 pub use converter::{
-    ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
+    ConversionOptions, ConversionResult, ConversionWarning, Converter, ImageDescriber, WarningCode,
 };
 pub use error::ConvertError;
+
+#[cfg(feature = "gemini")]
+pub mod gemini {
+    pub use crate::converter::gemini::GeminiDescriber;
+}
 
 use std::path::Path;
 

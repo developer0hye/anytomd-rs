@@ -1,5 +1,7 @@
 pub mod csv_conv;
 pub mod docx;
+#[cfg(feature = "gemini")]
+pub mod gemini;
 pub mod html;
 pub mod json_conv;
 pub mod plain_text;
@@ -7,7 +9,28 @@ pub mod pptx;
 pub mod xlsx;
 pub mod xml_conv;
 
+use std::sync::Arc;
+
 use crate::error::ConvertError;
+
+/// Trait for generating image descriptions using an LLM or other backend.
+///
+/// Implementors receive raw image bytes and return a textual description.
+/// The built-in `GeminiDescriber` (behind the `gemini` feature) uses
+/// Google Gemini, but any LLM backend can be plugged in.
+pub trait ImageDescriber: Send + Sync {
+    /// Describe the given image.
+    ///
+    /// - `image_bytes`: raw image data (PNG, JPEG, etc.)
+    /// - `mime_type`: MIME type of the image (e.g., `"image/png"`)
+    /// - `prompt`: instruction for the LLM (e.g., "Describe this image concisely")
+    fn describe(
+        &self,
+        image_bytes: &[u8],
+        mime_type: &str,
+        prompt: &str,
+    ) -> Result<String, ConvertError>;
+}
 
 /// Categories for recoverable conversion warnings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +50,7 @@ pub struct ConversionWarning {
 }
 
 /// Options controlling conversion behavior.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConversionOptions {
     /// Extract embedded images into `ConversionResult.images`.
     pub extract_images: bool,
@@ -39,6 +62,27 @@ pub struct ConversionOptions {
     pub max_input_bytes: usize,
     /// Maximum total uncompressed size of entries in a ZIP-based document.
     pub max_uncompressed_zip_bytes: usize,
+    /// Optional image describer for LLM-based alt text generation.
+    pub image_describer: Option<Arc<dyn ImageDescriber>>,
+}
+
+impl std::fmt::Debug for ConversionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConversionOptions")
+            .field("extract_images", &self.extract_images)
+            .field("max_total_image_bytes", &self.max_total_image_bytes)
+            .field("strict", &self.strict)
+            .field("max_input_bytes", &self.max_input_bytes)
+            .field(
+                "max_uncompressed_zip_bytes",
+                &self.max_uncompressed_zip_bytes,
+            )
+            .field(
+                "image_describer",
+                &self.image_describer.as_ref().map(|_| ".."),
+            )
+            .finish()
+    }
 }
 
 impl Default for ConversionOptions {
@@ -49,6 +93,7 @@ impl Default for ConversionOptions {
             strict: false,
             max_input_bytes: 100 * 1024 * 1024, // 100 MB
             max_uncompressed_zip_bytes: 500 * 1024 * 1024, // 500 MB
+            image_describer: None,
         }
     }
 }
@@ -115,6 +160,44 @@ pub(crate) fn decode_text(data: &[u8]) -> (String, Option<ConversionWarning>) {
         }
     };
     (decoded.into_owned(), Some(warning))
+}
+
+/// Infer a MIME type from an image filename extension and magic bytes.
+///
+/// Falls back to `"application/octet-stream"` if unrecognized.
+pub(crate) fn mime_from_image(filename: &str, data: &[u8]) -> &'static str {
+    // Check magic bytes first
+    if data.len() >= 8 {
+        if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "image/png";
+        }
+        if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return "image/jpeg";
+        }
+        if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+            return "image/gif";
+        }
+        if data.starts_with(b"RIFF") && data.len() >= 12 && &data[8..12] == b"WEBP" {
+            return "image/webp";
+        }
+    }
+
+    // Fallback to extension
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "tiff" | "tif" => "image/tiff",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Trait implemented by each format-specific converter.
@@ -190,5 +273,114 @@ mod tests {
         let (text, warning) = decode_text(input);
         assert_eq!(text, "한국어 中文 日本語");
         assert!(warning.is_none());
+    }
+
+    // ---- MIME detection tests ----
+
+    #[test]
+    fn test_mime_from_image_png_magic_bytes() {
+        let png_header = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(mime_from_image("image.png", &png_header), "image/png");
+        // Magic bytes take priority over extension
+        assert_eq!(mime_from_image("image.jpg", &png_header), "image/png");
+    }
+
+    #[test]
+    fn test_mime_from_image_jpeg_magic_bytes() {
+        let jpeg_header = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46];
+        assert_eq!(mime_from_image("photo.jpg", &jpeg_header), "image/jpeg");
+    }
+
+    #[test]
+    fn test_mime_from_image_gif_magic_bytes() {
+        assert_eq!(mime_from_image("anim.gif", b"GIF89a.."), "image/gif");
+        assert_eq!(mime_from_image("old.gif", b"GIF87a.."), "image/gif");
+    }
+
+    #[test]
+    fn test_mime_from_image_webp_magic_bytes() {
+        let webp = b"RIFF\x00\x00\x00\x00WEBP";
+        assert_eq!(mime_from_image("photo.webp", webp), "image/webp");
+    }
+
+    #[test]
+    fn test_mime_from_image_extension_fallback() {
+        let empty = b"unknown";
+        assert_eq!(mime_from_image("file.png", empty), "image/png");
+        assert_eq!(mime_from_image("file.jpg", empty), "image/jpeg");
+        assert_eq!(mime_from_image("file.jpeg", empty), "image/jpeg");
+        assert_eq!(mime_from_image("file.gif", empty), "image/gif");
+        assert_eq!(mime_from_image("file.webp", empty), "image/webp");
+        assert_eq!(mime_from_image("file.bmp", empty), "image/bmp");
+        assert_eq!(mime_from_image("file.tiff", empty), "image/tiff");
+        assert_eq!(mime_from_image("file.svg", empty), "image/svg+xml");
+        assert_eq!(
+            mime_from_image("file.xyz", empty),
+            "application/octet-stream"
+        );
+    }
+
+    // ---- ConversionOptions tests ----
+
+    #[test]
+    fn test_conversion_options_default_has_no_describer() {
+        let opts = ConversionOptions::default();
+        assert!(opts.image_describer.is_none());
+    }
+
+    #[test]
+    fn test_conversion_options_debug_format() {
+        let opts = ConversionOptions::default();
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("ConversionOptions"));
+        assert!(debug.contains("image_describer: None"));
+    }
+
+    #[test]
+    fn test_conversion_options_clone_with_describer() {
+        use crate::error::ConvertError;
+
+        struct MockDescriber;
+        impl ImageDescriber for MockDescriber {
+            fn describe(
+                &self,
+                _image_bytes: &[u8],
+                _mime_type: &str,
+                _prompt: &str,
+            ) -> Result<String, ConvertError> {
+                Ok("mock".to_string())
+            }
+        }
+
+        let opts = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber)),
+            ..Default::default()
+        };
+        let cloned = opts.clone();
+        assert!(cloned.image_describer.is_some());
+    }
+
+    #[test]
+    fn test_conversion_options_debug_with_describer() {
+        use crate::error::ConvertError;
+
+        struct MockDescriber;
+        impl ImageDescriber for MockDescriber {
+            fn describe(
+                &self,
+                _image_bytes: &[u8],
+                _mime_type: &str,
+                _prompt: &str,
+            ) -> Result<String, ConvertError> {
+                Ok("mock".to_string())
+            }
+        }
+
+        let opts = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber)),
+            ..Default::default()
+        };
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("image_describer: Some"));
     }
 }
