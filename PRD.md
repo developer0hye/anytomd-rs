@@ -28,7 +28,7 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 
 ### 1.5 Non-Goals
 - Pixel-perfect document rendering (we target LLM-readable Markdown, not visual fidelity)
-- LLM-dependent features (image captioning, audio transcription) — these belong in the consuming application, not in a conversion library
+- Audio transcription — out of scope (requires specialized models)
 - Cloud service integrations (Azure Document Intelligence, YouTube API, etc.)
 - MCP server implementation
 
@@ -333,6 +333,43 @@ Scanned PDFs (image-based) cannot be handled without OCR — this is explicitly 
 // Similar to Python's markdownify but in Rust
 ```
 
+### 4.9 LLM-Assisted Image Description
+
+Embedded images in DOCX/PPTX can optionally be described by an external LLM. This provides richer Markdown output (e.g., `![A bar chart showing Q3 revenue by region](image_1.png)`) instead of generic filenames.
+
+**Design: Trait-based injection**
+
+The library does NOT make HTTP calls or manage API keys itself. Instead, callers provide an implementation of the `ImageDescriber` trait:
+
+```rust
+pub trait ImageDescriber: Send + Sync {
+    fn describe(&self, image_bytes: &[u8], prompt: &str) -> Result<String, ConvertError>;
+}
+```
+
+This is passed via `ConversionOptions`:
+
+```rust
+pub struct ConversionOptions {
+    // ... existing fields ...
+    /// Optional LLM-based image describer.
+    pub image_describer: Option<Box<dyn ImageDescriber>>,
+}
+```
+
+**Behavior:**
+- If `image_describer` is `None` (default), images are referenced by filename only — no LLM call is made
+- If provided, the describer is called for each extracted image with the image bytes and a default prompt
+- If the describer returns an error, the image is still included with a generic filename and a warning is appended
+- The library is agnostic to which LLM provider is used — the trait works with any backend (Gemini, OpenAI, local models, etc.)
+
+**Default LLM provider: Google Gemini**
+
+When building the built-in / example `ImageDescriber` implementation:
+- Use **Google Gemini** as the LLM provider
+- Default model: **`gemini-2.0-flash`**
+- Always refer to the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs) for the latest API specs, authentication methods, and model availability before implementing or updating Gemini-related code
+
 ---
 
 ## 5. Dependencies
@@ -545,6 +582,7 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 - [ ] Optional CLI binary (`cargo install anytomd-rs`)
 
 ### Future
+- [ ] `ImageDescriber` trait + Gemini-based example implementation
 - [ ] Outlook MSG support
 - [ ] WASM compilation target
 - [ ] Streaming conversion for large files
@@ -562,7 +600,7 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 | DOCX approach | DOCX → HTML → MD (2 steps) | DOCX → MD directly (1 step) |
 | PDF approach | pdfminer + pdfplumber | pdf-extract (pure Rust) |
 | XLSX approach | pandas + openpyxl | calamine |
-| LLM features | Built-in (image caption, audio transcription) | Out of scope (library consumer's responsibility) |
+| LLM features | Built-in (image caption, audio transcription) | Optional trait-based image description (Gemini default) |
 | Cloud integrations | Azure, YouTube, Wikipedia, Bing | None (pure local conversion) |
 | WASM support | No | Possible (P0 deps are all pure Rust) |
 | Cross-platform build | PyInstaller fragility | `cargo build` (no external runtime) |

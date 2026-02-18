@@ -58,6 +58,20 @@ MarkItDown converts DOCX via a two-step process (DOCX → HTML via mammoth → M
 
 ---
 
+## LLM Integration — Gemini
+
+anytomd-rs supports optional LLM-based image description via the `ImageDescriber` trait (see PRD §4.9). The library itself does not make HTTP calls or manage API keys — callers inject their own implementation.
+
+**Default LLM provider: Google Gemini**
+
+- Use **Google Gemini** as the default LLM provider for built-in / example implementations
+- Default model: **`gemini-2.0-flash`**
+- When developing or updating any Gemini-related code (API calls, authentication, model parameters, request/response formats), **always consult the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs)** for the latest specs — do NOT rely on cached knowledge or outdated examples
+- API keys are the caller's responsibility — the library never stores or manages credentials
+- The `ImageDescriber` trait is provider-agnostic: Gemini is the default, but any LLM backend can be used
+
+---
+
 ## Language Rules
 
 **All project artifacts MUST be written in English.** No exceptions.
