@@ -27,6 +27,8 @@ A pure Rust library that converts various document formats into Markdown — des
 | Images | `.png`, `.jpg`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`, `.heic`, `.avif` | Optional LLM-based alt text via `ImageDescriber` |
 | Plain Text | `.txt`, `.md`, `.rst`, `.log`, `.toml`, `.yaml`, `.ini`, etc. | Passthrough with encoding detection (UTF-8, UTF-16, Windows-1252) |
 
+**Note on PDF:** PDF conversion is intentionally out of scope. Gemini, ChatGPT, and Claude already provide native PDF support (with plan/model-specific limits), so anytomd focuses on formats that still benefit from dedicated Markdown conversion.
+
 Format is auto-detected from magic bytes and file extension. ZIP-based formats (DOCX/PPTX/XLSX) are distinguished by inspecting internal archive structure.
 
 ## Installation
