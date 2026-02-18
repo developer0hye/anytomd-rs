@@ -37,13 +37,21 @@ pub fn convert_file(
     let format = detection::detect_format(path, header);
 
     // For ZIP-based formats, introspect to find the specific type
-    let format = match format {
-        Some("zip") => detection::detect_zip_format(&data),
-        other => other,
+    let (format, is_zip_magic) = match format {
+        Some("zip") => (detection::detect_zip_format(&data), true),
+        other => (other, false),
     };
 
-    let extension =
-        format.unwrap_or_else(|| path.extension().and_then(|e| e.to_str()).unwrap_or(""));
+    let extension = match format {
+        Some(fmt) => fmt,
+        None if is_zip_magic => {
+            // ZIP magic bytes detected but not a known OOXML format — reject
+            return Err(ConvertError::UnsupportedFormat {
+                extension: "zip".to_string(),
+            });
+        }
+        None => path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+    };
 
     convert_bytes(&data, extension, options)
 }
@@ -123,6 +131,39 @@ mod tests {
         };
         let result = convert_bytes(data, "txt", &options);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_convert_file_non_ooxml_zip_returns_unsupported() {
+        // Create a minimal valid ZIP file that is NOT an OOXML format
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip_writer = zip::ZipWriter::new(&mut buf);
+            let options = zip::write::SimpleFileOptions::default();
+            zip_writer.start_file("hello.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip_writer, b"hello world").unwrap();
+            zip_writer.finish().unwrap();
+        }
+        let zip_data = buf.into_inner();
+
+        // Write to a temp file with .txt extension
+        let dir = std::env::temp_dir().join("anytomd_test_zip_misroute");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("archive.txt");
+        std::fs::write(&file_path, &zip_data).unwrap();
+
+        let options = ConversionOptions::default();
+        let result = convert_file(&file_path, &options);
+
+        assert!(result.is_err(), "expected UnsupportedFormat error");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("unsupported format"),
+            "error was: {err}"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
