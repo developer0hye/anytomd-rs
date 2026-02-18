@@ -168,16 +168,6 @@ Set `strict: true` in `ConversionOptions` to turn recoverable failures into erro
 
 Warning codes: `SkippedElement`, `UnsupportedFeature`, `ResourceLimitReached`, `MalformedSegment`.
 
-## Comparison with MarkItDown
-
-| | anytomd | MarkItDown |
-|---|---------|------------|
-| Language | Pure Rust | Python |
-| Runtime dependency | None | Python interpreter |
-| DOCX conversion | Direct OOXML-to-Markdown | DOCX → HTML → Markdown (two-step) |
-| Binary size | Single static binary | ~50 MB with bundled Python |
-| Integration | `cargo add anytomd` | PyO3/subprocess/bundled runtime |
-
 ## Development
 
 ### Build and Test
