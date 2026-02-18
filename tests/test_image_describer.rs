@@ -168,3 +168,119 @@ fn test_pptx_without_describer_has_empty_alt() {
         result.markdown
     );
 }
+
+// ---- XLSX image describer integration tests ----
+
+/// Build a minimal XLSX ZIP with an embedded image for integration tests.
+///
+/// Contains a single sheet "Sheet1" with one data row and an image (image1.png)
+/// embedded via the drawing relationship chain.
+fn build_xlsx_with_image() -> Vec<u8> {
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    let buf = Vec::new();
+    let mut zip = ZipWriter::new(Cursor::new(buf));
+    let opts = SimpleFileOptions::default();
+
+    // [Content_Types].xml
+    let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#;
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(ct.as_bytes()).unwrap();
+
+    // _rels/.rels
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+    )
+    .unwrap();
+
+    // xl/workbook.xml
+    zip.start_file("xl/workbook.xml", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+    )
+    .unwrap();
+
+    // xl/_rels/workbook.xml.rels
+    zip.start_file("xl/_rels/workbook.xml.rels", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+    )
+    .unwrap();
+
+    // xl/worksheets/sheet1.xml — one row of data
+    zip.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Alice</t></is></c></row></sheetData></worksheet>"#,
+    )
+    .unwrap();
+
+    // xl/worksheets/_rels/sheet1.xml.rels — points to drawing
+    zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", opts)
+        .unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#,
+    )
+    .unwrap();
+
+    // xl/drawings/drawing1.xml — one blip
+    zip.start_file("xl/drawings/drawing1.xml", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:twoCellAnchor><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="Picture 1"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></xdr:twoCellAnchor></xdr:wsDr>"#,
+    )
+    .unwrap();
+
+    // xl/drawings/_rels/drawing1.xml.rels — resolve to media
+    zip.start_file("xl/drawings/_rels/drawing1.xml.rels", opts)
+        .unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>"#,
+    )
+    .unwrap();
+
+    // xl/media/image1.png — fake image data
+    zip.start_file("xl/media/image1.png", opts).unwrap();
+    zip.write_all(b"fake-png-data-for-xlsx-integration-test")
+        .unwrap();
+
+    let cursor = zip.finish().unwrap();
+    cursor.into_inner()
+}
+
+#[test]
+fn test_xlsx_with_mock_describer_replaces_alt_text() {
+    let data = build_xlsx_with_image();
+    let options = ConversionOptions {
+        image_describer: Some(Arc::new(MockDescriber {
+            description: "A pie chart showing quarterly revenue".to_string(),
+        })),
+        ..Default::default()
+    };
+    let result = anytomd::convert_bytes(&data, "xlsx", &options).unwrap();
+    assert!(
+        result
+            .markdown
+            .contains("![A pie chart showing quarterly revenue](image1.png)"),
+        "markdown was: {}",
+        result.markdown
+    );
+    // Should still have the table data
+    assert!(result.markdown.contains("Name"));
+    assert!(result.markdown.contains("Alice"));
+}
+
+#[test]
+fn test_xlsx_without_describer_has_empty_alt() {
+    let data = build_xlsx_with_image();
+    let options = ConversionOptions {
+        extract_images: true,
+        ..Default::default()
+    };
+    let result = anytomd::convert_bytes(&data, "xlsx", &options).unwrap();
+    assert!(
+        result.markdown.contains("![](image1.png)"),
+        "markdown was: {}",
+        result.markdown
+    );
+}

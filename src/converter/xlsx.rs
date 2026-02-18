@@ -1,7 +1,10 @@
-use std::io::Cursor;
+use std::collections::HashMap;
+use std::io::{Cursor, Read};
 
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use chrono::{Datelike, Timelike};
+use quick_xml::events::Event;
+use zip::ZipArchive;
 
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -10,6 +13,242 @@ use crate::error::ConvertError;
 use crate::markdown::{build_table, format_heading};
 
 pub struct XlsxConverter;
+
+// ---- ZIP helpers ----
+
+/// Read a UTF-8 text file from a ZIP archive, returning None if not found.
+fn read_zip_text(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<Option<String>, ConvertError> {
+    let mut file = match archive.by_name(path) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(ConvertError::ZipError(e)),
+    };
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(Some(buf))
+}
+
+/// Read raw bytes from a ZIP archive, returning None if not found.
+fn read_zip_bytes(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<Option<Vec<u8>>, ConvertError> {
+    let mut file = match archive.by_name(path) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(ConvertError::ZipError(e)),
+    };
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(Some(buf))
+}
+
+/// Parse a `.rels` XML file, returning a map of relationship Id → Target.
+fn parse_rels(xml: &str) -> HashMap<String, String> {
+    let mut rels = HashMap::new();
+    let mut reader = quick_xml::Reader::from_str(xml);
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+                let local_str = std::str::from_utf8(local.as_ref()).unwrap_or("");
+
+                if local_str == "Relationship" {
+                    let mut id = None;
+                    let mut target = None;
+
+                    for attr in e.attributes().flatten() {
+                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                        let val = String::from_utf8_lossy(&attr.value).to_string();
+                        match key {
+                            "Id" => id = Some(val),
+                            "Target" => target = Some(val),
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(id), Some(target)) = (id, target) {
+                        rels.insert(id, target);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+
+    rels
+}
+
+/// Extract embedded images for a given sheet by following the OOXML relationship chain:
+///
+/// 1. `xl/worksheets/_rels/sheet{N}.xml.rels` → find drawing targets
+/// 2. `xl/drawings/drawing{N}.xml` → find `<a:blip r:embed="rId..."/>` elements
+/// 3. `xl/drawings/_rels/drawing{N}.xml.rels` → resolve image file paths
+/// 4. `xl/media/image{N}.png` → read image bytes
+///
+/// Returns `(filename, bytes)` pairs for each image found.
+fn extract_sheet_images(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    sheet_index: usize,
+) -> Vec<(String, Vec<u8>)> {
+    let mut images = Vec::new();
+
+    // Step 1: Read sheet rels to find drawing references
+    let sheet_rels_path = format!("xl/worksheets/_rels/sheet{}.xml.rels", sheet_index + 1);
+    let sheet_rels_xml = match read_zip_text(archive, &sheet_rels_path) {
+        Ok(Some(xml)) => xml,
+        _ => return images,
+    };
+
+    let sheet_rels = parse_rels(&sheet_rels_xml);
+
+    // Find drawing targets (relationship type contains "drawing")
+    let drawing_targets: Vec<String> = sheet_rels
+        .values()
+        .filter(|target| target.contains("drawing"))
+        .cloned()
+        .collect();
+
+    for drawing_target in &drawing_targets {
+        // Resolve the drawing path relative to xl/worksheets/
+        let drawing_path = if let Some(stripped) = drawing_target.strip_prefix("../") {
+            format!("xl/{stripped}")
+        } else {
+            format!("xl/worksheets/{drawing_target}")
+        };
+
+        // Step 2: Read drawing XML and find blip references
+        let drawing_xml = match read_zip_text(archive, &drawing_path) {
+            Ok(Some(xml)) => xml,
+            _ => continue,
+        };
+
+        let blip_rel_ids = parse_drawing_blips(&drawing_xml);
+
+        if blip_rel_ids.is_empty() {
+            continue;
+        }
+
+        // Step 3: Read drawing rels to resolve image paths
+        let drawing_rels_path = derive_rels_path(&drawing_path);
+        let drawing_rels_xml = match read_zip_text(archive, &drawing_rels_path) {
+            Ok(Some(xml)) => xml,
+            _ => continue,
+        };
+        let drawing_rels = parse_rels(&drawing_rels_xml);
+
+        // Step 4: Read image bytes for each blip
+        for rel_id in &blip_rel_ids {
+            if let Some(image_target) = drawing_rels.get(rel_id) {
+                let image_path = if image_target.starts_with("../") {
+                    // Resolve relative to drawing path's directory
+                    let drawing_dir = drawing_path
+                        .rfind('/')
+                        .map(|pos| &drawing_path[..pos])
+                        .unwrap_or("");
+                    resolve_relative_path(drawing_dir, image_target)
+                } else if let Some(stripped) = image_target.strip_prefix('/') {
+                    stripped.to_string()
+                } else {
+                    let drawing_dir = drawing_path
+                        .rfind('/')
+                        .map(|pos| &drawing_path[..pos])
+                        .unwrap_or("");
+                    format!("{drawing_dir}/{image_target}")
+                };
+
+                let filename = image_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&image_path)
+                    .to_string();
+
+                if let Ok(Some(img_data)) = read_zip_bytes(archive, &image_path) {
+                    images.push((filename, img_data));
+                }
+            }
+        }
+    }
+
+    images
+}
+
+/// Parse a drawing XML to extract blip relationship IDs from anchor elements.
+fn parse_drawing_blips(xml: &str) -> Vec<String> {
+    let mut rel_ids = Vec::new();
+    let mut reader = quick_xml::Reader::from_str(xml);
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+                let local_str = std::str::from_utf8(local.as_ref()).unwrap_or("");
+
+                if local_str == "blip" {
+                    for attr in e.attributes().flatten() {
+                        let key_local = attr.key.local_name();
+                        let key_str = std::str::from_utf8(key_local.as_ref()).unwrap_or("");
+                        if key_str == "embed" {
+                            let val = String::from_utf8_lossy(&attr.value).to_string();
+                            rel_ids.push(val);
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+
+    rel_ids
+}
+
+/// Derive the .rels path for a given file path.
+///
+/// Example: `xl/drawings/drawing1.xml` → `xl/drawings/_rels/drawing1.xml.rels`
+fn derive_rels_path(file_path: &str) -> String {
+    if let Some(pos) = file_path.rfind('/') {
+        let dir = &file_path[..pos];
+        let filename = &file_path[pos + 1..];
+        format!("{dir}/_rels/{filename}.rels")
+    } else {
+        format!("_rels/{file_path}.rels")
+    }
+}
+
+/// Resolve a relative path target against a base directory path.
+///
+/// Example: base_dir=`xl/drawings`, target=`../media/image1.png`
+///          → `xl/media/image1.png`
+fn resolve_relative_path(base_dir: &str, target: &str) -> String {
+    if !target.starts_with("../") {
+        if base_dir.is_empty() {
+            return target.to_string();
+        }
+        return format!("{base_dir}/{target}");
+    }
+
+    let mut parts: Vec<&str> = base_dir.split('/').collect();
+
+    let mut remaining = target;
+    while let Some(rest) = remaining.strip_prefix("../") {
+        parts.pop();
+        remaining = rest;
+    }
+
+    if parts.is_empty() {
+        remaining.to_string()
+    } else {
+        format!("{}/{remaining}", parts.join("/"))
+    }
+}
 
 /// Convert a 0-based column index to an Excel-style column letter (A, B, ..., Z, AA, ...).
 fn col_letter(col: usize) -> String {
@@ -115,7 +354,10 @@ impl Converter for XlsxConverter {
         let mut sections = Vec::new();
         let mut warnings = Vec::new();
 
-        for name in &sheet_names {
+        // Track which sheet index each section corresponds to (for image attachment)
+        let mut section_sheet_indices: Vec<usize> = Vec::new();
+
+        for (sheet_idx, name) in sheet_names.iter().enumerate() {
             let range = match workbook.worksheet_range(name) {
                 Ok(r) => r,
                 Err(e) => {
@@ -169,12 +411,90 @@ impl Converter for XlsxConverter {
             let heading = format_heading(2, name);
             let table = build_table(&header_refs, &row_refs);
             sections.push(format!("{heading}{table}"));
+            section_sheet_indices.push(sheet_idx);
         }
 
-        let markdown = sections.join("\n");
+        // Extract embedded images if requested or if describer needs them
+        let need_image_bytes = options.extract_images || options.image_describer.is_some();
+        let mut images: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut image_data_for_describer: Vec<(String, Vec<u8>)> = Vec::new();
+
+        if need_image_bytes {
+            // Open a fresh ZipArchive (calamine consumed the original cursor)
+            let mut archive = ZipArchive::new(Cursor::new(data))?;
+            let mut total_image_bytes: usize = 0;
+
+            for (section_idx, &sheet_idx) in section_sheet_indices.iter().enumerate() {
+                let sheet_images = extract_sheet_images(&mut archive, sheet_idx);
+
+                let mut image_lines = Vec::new();
+                for (filename, img_data) in sheet_images {
+                    total_image_bytes += img_data.len();
+                    if total_image_bytes <= options.max_total_image_bytes {
+                        image_lines.push(format!("![]({})", filename));
+                        if options.extract_images {
+                            images.push((filename.clone(), img_data.clone()));
+                        }
+                        if options.image_describer.is_some() {
+                            image_data_for_describer.push((filename, img_data));
+                        }
+                    } else {
+                        warnings.push(ConversionWarning {
+                            code: WarningCode::ResourceLimitReached,
+                            message: format!(
+                                "total image bytes exceeded limit ({})",
+                                options.max_total_image_bytes
+                            ),
+                            location: Some(filename),
+                        });
+                    }
+                }
+
+                if !image_lines.is_empty() {
+                    sections[section_idx].push_str(&format!("\n{}", image_lines.join("\n")));
+                }
+            }
+        }
+
+        // Generate image descriptions if describer is set
+        let mut markdown = sections.join("\n");
+        if let Some(ref describer) = options.image_describer {
+            for (filename, img_data) in &image_data_for_describer {
+                let mime = crate::converter::mime_from_image(filename, img_data);
+                let prompt = "Describe this image concisely for use as alt text.";
+                match describer.describe(img_data, mime, prompt) {
+                    Ok(description) => {
+                        let pattern = format!("]({})", filename);
+                        let mut result = String::new();
+                        let mut remaining = markdown.as_str();
+                        while let Some(pos) = remaining.find(&pattern) {
+                            let before = &remaining[..pos];
+                            if let Some(bracket_pos) = before.rfind("![") {
+                                result.push_str(&remaining[..bracket_pos]);
+                                result.push_str(&format!("![{}]({})", description, filename));
+                                remaining = &remaining[pos + pattern.len()..];
+                            } else {
+                                result.push_str(&remaining[..pos + pattern.len()]);
+                                remaining = &remaining[pos + pattern.len()..];
+                            }
+                        }
+                        result.push_str(remaining);
+                        markdown = result;
+                    }
+                    Err(e) => {
+                        warnings.push(ConversionWarning {
+                            code: WarningCode::SkippedElement,
+                            message: format!("image description failed for '{}': {}", filename, e),
+                            location: Some(filename.clone()),
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(ConversionResult {
             markdown,
+            images,
             warnings,
             ..Default::default()
         })
@@ -661,6 +981,437 @@ mod tests {
         assert!(
             result.contains("12:00:00"),
             "expected time 12:00:00 in output, got: {result}"
+        );
+    }
+
+    // -- Image extraction tests --
+
+    use crate::converter::ImageDescriber;
+    use std::sync::Arc;
+
+    struct MockDescriber {
+        description: String,
+    }
+
+    impl ImageDescriber for MockDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Ok(self.description.clone())
+        }
+    }
+
+    struct FailingDescriber;
+
+    impl ImageDescriber for FailingDescriber {
+        fn describe(
+            &self,
+            _image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            Err(ConvertError::ImageDescriptionError {
+                reason: "API error".to_string(),
+            })
+        }
+    }
+
+    /// Build a minimal XLSX file with an embedded image in sheet 1.
+    ///
+    /// The ZIP contains:
+    /// - Standard XLSX structure (workbook, sheet with data)
+    /// - `xl/worksheets/_rels/sheet1.xml.rels` → points to `../drawings/drawing1.xml`
+    /// - `xl/drawings/drawing1.xml` → contains `<a:blip r:embed="rId1"/>`
+    /// - `xl/drawings/_rels/drawing1.xml.rels` → points to `../media/image1.png`
+    /// - `xl/media/image1.png` → fake image bytes
+    fn build_test_xlsx_with_image(
+        sheets: &[(&str, &[&[TestCell]])],
+        image_filename: &str,
+        image_data: &[u8],
+    ) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let mut zip = ZipWriter::new(Cursor::new(buf));
+        let opts = SimpleFileOptions::default();
+
+        // [Content_Types].xml — add image content type
+        let mut ct = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+             <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+             <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+             <Default Extension=\"png\" ContentType=\"image/png\"/>\
+             <Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+        );
+        for (i, _) in sheets.iter().enumerate() {
+            ct.push_str(&format!(
+                "<Override PartName=\"/xl/worksheets/sheet{}.xml\" \
+                 ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>",
+                i + 1
+            ));
+        }
+        ct.push_str("</Types>");
+        zip.start_file("[Content_Types].xml", opts).unwrap();
+        zip.write_all(ct.as_bytes()).unwrap();
+
+        // _rels/.rels
+        zip.start_file("_rels/.rels", opts).unwrap();
+        zip.write_all(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+              <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+              <Relationship Id=\"rId1\" \
+              Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+              Target=\"xl/workbook.xml\"/>\
+              </Relationships>",
+        )
+        .unwrap();
+
+        // xl/workbook.xml
+        let mut wb = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
+             xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+             <sheets>",
+        );
+        for (i, (name, _)) in sheets.iter().enumerate() {
+            wb.push_str(&format!(
+                "<sheet name=\"{name}\" sheetId=\"{}\" r:id=\"rId{}\"/>",
+                i + 1,
+                i + 1
+            ));
+        }
+        wb.push_str("</sheets></workbook>");
+        zip.start_file("xl/workbook.xml", opts).unwrap();
+        zip.write_all(wb.as_bytes()).unwrap();
+
+        // xl/_rels/workbook.xml.rels
+        let mut rels = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+        );
+        for (i, _) in sheets.iter().enumerate() {
+            rels.push_str(&format!(
+                "<Relationship Id=\"rId{}\" \
+                 Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" \
+                 Target=\"worksheets/sheet{}.xml\"/>",
+                i + 1,
+                i + 1
+            ));
+        }
+        rels.push_str("</Relationships>");
+        zip.start_file("xl/_rels/workbook.xml.rels", opts).unwrap();
+        zip.write_all(rels.as_bytes()).unwrap();
+
+        // Each worksheet
+        for (i, (_, rows)) in sheets.iter().enumerate() {
+            let mut ws = String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+                 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+                 <sheetData>",
+            );
+            for (ri, row) in rows.iter().enumerate() {
+                ws.push_str(&format!("<row r=\"{}\">", ri + 1));
+                for (ci, cell) in row.iter().enumerate() {
+                    let col = test_col_letter(ci);
+                    let r = ri + 1;
+                    match cell {
+                        TestCell::Str(s) => {
+                            let escaped = s
+                                .replace('&', "&amp;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;")
+                                .replace('"', "&quot;");
+                            ws.push_str(&format!(
+                                "<c r=\"{col}{r}\" t=\"inlineStr\"><is><t>{escaped}</t></is></c>"
+                            ));
+                        }
+                        TestCell::Num(f) => {
+                            ws.push_str(&format!("<c r=\"{col}{r}\"><v>{f}</v></c>"));
+                        }
+                        TestCell::Bool(b) => {
+                            let v = if *b { 1 } else { 0 };
+                            ws.push_str(&format!("<c r=\"{col}{r}\" t=\"b\"><v>{v}</v></c>"));
+                        }
+                        TestCell::Empty => {}
+                    }
+                }
+                ws.push_str("</row>");
+            }
+            ws.push_str("</sheetData></worksheet>");
+            zip.start_file(format!("xl/worksheets/sheet{}.xml", i + 1), opts)
+                .unwrap();
+            zip.write_all(ws.as_bytes()).unwrap();
+        }
+
+        // Sheet 1 rels — point to drawing1.xml
+        zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", opts)
+            .unwrap();
+        zip.write_all(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+              <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+              <Relationship Id=\"rId1\" \
+              Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" \
+              Target=\"../drawings/drawing1.xml\"/>\
+              </Relationships>",
+        )
+        .unwrap();
+
+        // xl/drawings/drawing1.xml — contains a blip reference
+        let drawing_xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" \
+             xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+             xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+             <xdr:twoCellAnchor>\
+             <xdr:pic>\
+             <xdr:nvPicPr><xdr:cNvPr id=\"1\" name=\"Picture 1\"/><xdr:cNvPicPr/></xdr:nvPicPr>\
+             <xdr:blipFill><a:blip r:embed=\"rId1\"/></xdr:blipFill>\
+             </xdr:pic>\
+             </xdr:twoCellAnchor>\
+             </xdr:wsDr>"
+        );
+        zip.start_file("xl/drawings/drawing1.xml", opts).unwrap();
+        zip.write_all(drawing_xml.as_bytes()).unwrap();
+
+        // xl/drawings/_rels/drawing1.xml.rels — resolve blip rId1 to media file
+        let drawing_rels = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+             <Relationship Id=\"rId1\" \
+             Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+             Target=\"../media/{image_filename}\"/>\
+             </Relationships>"
+        );
+        zip.start_file("xl/drawings/_rels/drawing1.xml.rels", opts)
+            .unwrap();
+        zip.write_all(drawing_rels.as_bytes()).unwrap();
+
+        // xl/media/image1.png — actual image bytes
+        zip.start_file(format!("xl/media/{image_filename}"), opts)
+            .unwrap();
+        zip.write_all(image_data).unwrap();
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn test_xlsx_image_extraction_disabled_by_default() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // Default options: extract_images=false, image_describer=None
+        assert!(result.images.is_empty());
+        assert!(
+            !result.markdown.contains("!["),
+            "markdown should not contain image refs by default: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_xlsx_image_extraction_with_extract_images() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0].0, "image1.png");
+        assert_eq!(result.images[0].1, b"fake-png-data");
+    }
+
+    #[test]
+    fn test_xlsx_image_in_markdown() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result.markdown.contains("![](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Image refs should appear after the table
+        assert!(result.markdown.contains("## Sheet1"));
+    }
+
+    #[test]
+    fn test_xlsx_image_describer_replaces_alt_text() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "A chart showing sales data".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![A chart showing sales data](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Without extract_images, images vec should be empty
+        assert!(result.images.is_empty());
+    }
+
+    #[test]
+    fn test_xlsx_image_describer_error_keeps_original() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(FailingDescriber)),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        // Original empty alt text should be preserved
+        assert!(
+            result.markdown.contains("![](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Should have a warning about the failure
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::SkippedElement
+                && w.message.contains("image description failed")));
+    }
+
+    #[test]
+    fn test_xlsx_image_byte_budget_enforced() {
+        use TestCell::*;
+        // Create an image that exceeds a small budget
+        let large_image = vec![0u8; 1000];
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            &large_image,
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            max_total_image_bytes: 500, // budget smaller than image
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        // Image should not be extracted (exceeds budget)
+        assert!(result.images.is_empty());
+        // Should have a ResourceLimitReached warning
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ResourceLimitReached));
+    }
+
+    // -- Helper function unit tests --
+
+    #[test]
+    fn test_parse_rels_basic() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Target="../drawings/drawing1.xml"
+             Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"/>
+            </Relationships>"#;
+        let rels = parse_rels(xml);
+        assert_eq!(
+            rels.get("rId1").map(|s| s.as_str()),
+            Some("../drawings/drawing1.xml")
+        );
+    }
+
+    #[test]
+    fn test_parse_drawing_blips_basic() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+                      xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                      xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <xdr:twoCellAnchor>
+            <xdr:pic><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic>
+            </xdr:twoCellAnchor>
+            <xdr:oneCellAnchor>
+            <xdr:pic><xdr:blipFill><a:blip r:embed="rId2"/></xdr:blipFill></xdr:pic>
+            </xdr:oneCellAnchor>
+            </xdr:wsDr>"#;
+        let blips = parse_drawing_blips(xml);
+        assert_eq!(blips, vec!["rId1", "rId2"]);
+    }
+
+    #[test]
+    fn test_derive_rels_path() {
+        assert_eq!(
+            derive_rels_path("xl/drawings/drawing1.xml"),
+            "xl/drawings/_rels/drawing1.xml.rels"
+        );
+        assert_eq!(
+            derive_rels_path("xl/worksheets/sheet1.xml"),
+            "xl/worksheets/_rels/sheet1.xml.rels"
+        );
+        assert_eq!(derive_rels_path("file.xml"), "_rels/file.xml.rels");
+    }
+
+    #[test]
+    fn test_resolve_relative_path_parent_dir() {
+        assert_eq!(
+            resolve_relative_path("xl/drawings", "../media/image1.png"),
+            "xl/media/image1.png"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_path_same_dir() {
+        assert_eq!(
+            resolve_relative_path("xl/drawings", "image1.png"),
+            "xl/drawings/image1.png"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_path_empty_base() {
+        assert_eq!(
+            resolve_relative_path("", "media/image1.png"),
+            "media/image1.png"
         );
     }
 }
