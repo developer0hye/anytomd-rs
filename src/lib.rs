@@ -42,11 +42,13 @@ pub fn convert_bytes(
     options: &ConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
     use converter::csv_conv::CsvConverter;
+    use converter::docx::DocxConverter;
     use converter::json_conv::JsonConverter;
     use converter::plain_text::PlainTextConverter;
     use converter::xlsx::XlsxConverter;
 
     let converters: Vec<Box<dyn Converter>> = vec![
+        Box::new(DocxConverter),
         Box::new(XlsxConverter),
         Box::new(JsonConverter),
         Box::new(CsvConverter),
