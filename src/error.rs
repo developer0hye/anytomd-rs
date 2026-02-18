@@ -4,6 +4,9 @@ pub enum ConvertError {
     #[error("unsupported format: {extension}")]
     UnsupportedFormat { extension: String },
 
+    #[error("input too large: {size} bytes exceeds limit of {limit} bytes")]
+    InputTooLarge { size: usize, limit: usize },
+
     #[error("failed to read ZIP archive")]
     ZipError(#[from] zip::result::ZipError),
 
