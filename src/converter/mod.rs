@@ -1,5 +1,6 @@
 pub mod csv_conv;
 pub mod docx;
+pub mod html;
 pub mod json_conv;
 pub mod plain_text;
 pub mod pptx;

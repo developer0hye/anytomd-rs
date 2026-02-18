@@ -43,6 +43,7 @@ pub fn convert_bytes(
 ) -> Result<ConversionResult, ConvertError> {
     use converter::csv_conv::CsvConverter;
     use converter::docx::DocxConverter;
+    use converter::html::HtmlConverter;
     use converter::json_conv::JsonConverter;
     use converter::plain_text::PlainTextConverter;
     use converter::pptx::PptxConverter;
@@ -54,6 +55,7 @@ pub fn convert_bytes(
         Box::new(XlsxConverter),
         Box::new(JsonConverter),
         Box::new(CsvConverter),
+        Box::new(HtmlConverter),
         Box::new(PlainTextConverter),
     ];
 
