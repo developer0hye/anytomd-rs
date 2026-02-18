@@ -1,7 +1,19 @@
+/// Escape special characters in a table cell so that pipes, backslashes,
+/// and newlines do not break Markdown table structure.
+fn escape_cell(content: &str) -> String {
+    content
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
+        .replace('\r', "")
+}
+
 /// Build a pipe-delimited Markdown table from headers and rows.
 ///
 /// Each row is padded or truncated to match the header count.
 /// Empty headers produce a table with no header labels but with a separator row.
+/// Special characters in headers and cells are escaped via `escape_cell`.
 pub fn build_table(headers: &[&str], rows: &[Vec<&str>]) -> String {
     let col_count = headers.len();
     if col_count == 0 {
@@ -14,7 +26,7 @@ pub fn build_table(headers: &[&str], rows: &[Vec<&str>]) -> String {
     out.push('|');
     for h in headers {
         out.push(' ');
-        out.push_str(h);
+        out.push_str(&escape_cell(h));
         out.push_str(" |");
     }
     out.push('\n');
@@ -32,7 +44,7 @@ pub fn build_table(headers: &[&str], rows: &[Vec<&str>]) -> String {
         for i in 0..col_count {
             out.push(' ');
             if let Some(cell) = row.get(i) {
-                out.push_str(cell);
+                out.push_str(&escape_cell(cell));
             }
             out.push_str(" |");
         }
@@ -189,5 +201,63 @@ mod tests {
         assert_eq!(format_list_item(1, false, 1, "Nested"), "  - Nested");
         assert_eq!(format_list_item(2, false, 1, "Deep"), "    - Deep");
         assert_eq!(format_list_item(1, true, 2, "Sub"), "  2. Sub");
+    }
+
+    // --- escape_cell unit tests ---
+
+    #[test]
+    fn test_escape_cell_pipe() {
+        assert_eq!(escape_cell("a|b"), "a\\|b");
+    }
+
+    #[test]
+    fn test_escape_cell_multiple_pipes() {
+        assert_eq!(escape_cell("a|b|c"), "a\\|b\\|c");
+    }
+
+    #[test]
+    fn test_escape_cell_newline() {
+        assert_eq!(escape_cell("line1\nline2"), "line1<br>line2");
+    }
+
+    #[test]
+    fn test_escape_cell_crlf() {
+        assert_eq!(escape_cell("line1\r\nline2"), "line1<br>line2");
+    }
+
+    #[test]
+    fn test_escape_cell_backslash() {
+        assert_eq!(escape_cell("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_escape_cell_backslash_pipe() {
+        assert_eq!(escape_cell("a\\|b"), "a\\\\\\|b");
+    }
+
+    #[test]
+    fn test_escape_cell_empty_and_plain() {
+        assert_eq!(escape_cell(""), "");
+        assert_eq!(escape_cell("plain text"), "plain text");
+    }
+
+    // --- build_table integration tests with escaping ---
+
+    #[test]
+    fn test_build_table_pipe_in_cell_escaped() {
+        let result = build_table(&["A", "B"], &[vec!["x|y", "z"]]);
+        assert!(result.contains("| x\\|y | z |"));
+    }
+
+    #[test]
+    fn test_build_table_pipe_in_header_escaped() {
+        let result = build_table(&["A|1", "B"], &[vec!["x", "y"]]);
+        assert!(result.contains("| A\\|1 | B |"));
+    }
+
+    #[test]
+    fn test_build_table_newline_in_cell_replaced() {
+        let result = build_table(&["A"], &[vec!["line1\nline2"]]);
+        assert!(result.contains("| line1<br>line2 |"));
     }
 }
