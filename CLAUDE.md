@@ -120,11 +120,17 @@ Follow these steps in order when merging a PR. Do not skip any step.
 - Run `gh pr checks <number> --watch` and wait for all CI checks to pass.
 - If CI fails, do **not** merge. Report the failure and stop.
 
-**Step 5. Merge the PR**
+**Step 5. Final review before merge**
+- Run `gh pr diff <number>` and review every changed file one more time.
+- Check for: accidental debug code, hardcoded paths, missing test coverage, unused imports, TODO comments that should have been resolved, secrets or credentials.
+- Verify the PR description accurately reflects the final diff (it may have drifted if fixup commits were added).
+- This step is mandatory — never skip it, even if CI is green. CI catches compilation and lint issues, but not logic errors or design oversights.
+
+**Step 6. Merge the PR**
 - **NEVER use the `--delete-branch` flag.** The worktree is still using the branch, so `--delete-branch` attempts to checkout `main` locally, which fails because `main` is already checked out in the main repo directory.
 - Merge command: `gh pr merge <number> --merge`
 
-**Step 6. Update local main**
+**Step 7. Update local main**
 - Move to the main repo directory and run `git pull`.
   ```bash
   cd /Users/yhkwon/Documents/Projects/anytomd-rs && git pull
