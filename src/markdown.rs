@@ -49,6 +49,47 @@ pub fn format_heading(level: u8, text: &str) -> String {
     format!("{} {}\n", hashes, text)
 }
 
+/// Wrap text with Markdown bold/italic markers.
+///
+/// Leading and trailing whitespace is preserved outside the markers for clean output.
+/// Returns the text unchanged if neither bold nor italic.
+/// Returns empty string if the input text (after trimming) is empty.
+pub fn wrap_formatting(text: &str, bold: bool, italic: bool) -> String {
+    if !bold && !italic {
+        return text.to_string();
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let leading = &text[..text.len() - text.trim_start().len()];
+    let trailing = &text[text.trim_end().len()..];
+
+    let wrapped = match (bold, italic) {
+        (true, true) => format!("***{trimmed}***"),
+        (true, false) => format!("**{trimmed}**"),
+        (false, true) => format!("*{trimmed}*"),
+        (false, false) => unreachable!(),
+    };
+
+    format!("{leading}{wrapped}{trailing}")
+}
+
+/// Format a list item with indentation and marker.
+///
+/// `level` is 0-based indentation depth. `ordered` selects numbered vs bullet marker.
+/// `counter` is the 1-based ordinal for ordered lists (ignored for unordered).
+pub fn format_list_item(level: u8, ordered: bool, counter: usize, text: &str) -> String {
+    let indent = "  ".repeat(level as usize);
+    if ordered {
+        format!("{indent}{counter}. {text}")
+    } else {
+        format!("{indent}- {text}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +144,50 @@ mod tests {
     fn test_format_heading_clamped_above() {
         assert_eq!(format_heading(7, "Seven"), "###### Seven\n");
         assert_eq!(format_heading(255, "Max"), "###### Max\n");
+    }
+
+    #[test]
+    fn test_wrap_formatting_bold() {
+        assert_eq!(wrap_formatting("hello", true, false), "**hello**");
+    }
+
+    #[test]
+    fn test_wrap_formatting_italic() {
+        assert_eq!(wrap_formatting("hello", false, true), "*hello*");
+    }
+
+    #[test]
+    fn test_wrap_formatting_bold_italic() {
+        assert_eq!(wrap_formatting("hello", true, true), "***hello***");
+    }
+
+    #[test]
+    fn test_wrap_formatting_none() {
+        assert_eq!(wrap_formatting("hello", false, false), "hello");
+    }
+
+    #[test]
+    fn test_wrap_formatting_empty_no_markers() {
+        assert_eq!(wrap_formatting("", true, false), "");
+        assert_eq!(wrap_formatting("", false, true), "");
+        assert_eq!(wrap_formatting("", true, true), "");
+    }
+
+    #[test]
+    fn test_format_list_item_unordered() {
+        assert_eq!(format_list_item(0, false, 1, "Item"), "- Item");
+    }
+
+    #[test]
+    fn test_format_list_item_ordered() {
+        assert_eq!(format_list_item(0, true, 1, "First"), "1. First");
+        assert_eq!(format_list_item(0, true, 3, "Third"), "3. Third");
+    }
+
+    #[test]
+    fn test_format_list_item_nested() {
+        assert_eq!(format_list_item(1, false, 1, "Nested"), "  - Nested");
+        assert_eq!(format_list_item(2, false, 1, "Deep"), "    - Deep");
+        assert_eq!(format_list_item(1, true, 2, "Sub"), "  2. Sub");
     }
 }
