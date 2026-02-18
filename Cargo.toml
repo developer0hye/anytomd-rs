@@ -1,11 +1,16 @@
 [package]
 name = "anytomd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.90"
 license = "Apache-2.0"
 description = "Pure Rust library that converts various document formats into Markdown"
 repository = "https://github.com/developer0hye/anytomd-rs"
+homepage = "https://github.com/developer0hye/anytomd-rs"
+documentation = "https://docs.rs/anytomd"
+readme = "README.md"
+keywords = ["markdown", "converter", "document", "llm"]
+categories = ["parser-implementations", "text-processing"]
 
 [features]
 default = []
