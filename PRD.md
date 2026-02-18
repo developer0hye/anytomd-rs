@@ -370,6 +370,24 @@ When building the built-in / example `ImageDescriber` implementation:
 - Default model: **`gemini-3-flash-preview`**
 - Always refer to the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs) for the latest API specs, authentication methods, and model availability before implementing or updating Gemini-related code
 
+**API key management:**
+
+The `ImageDescriber` trait has no concept of API keys — credential handling is entirely the implementor's responsibility. The built-in `GeminiDescriber` example should follow this pattern:
+
+```rust
+impl GeminiDescriber {
+    /// Create with an explicit API key.
+    pub fn new(api_key: String) -> Self { ... }
+
+    /// Create from the `GEMINI_API_KEY` environment variable.
+    pub fn from_env() -> Result<Self, ConvertError> { ... }
+}
+```
+
+- **Struct field** (`new`): The primary way — caller passes the key directly. Suitable for libraries and applications that manage secrets themselves.
+- **Environment variable fallback** (`from_env`): Reads `GEMINI_API_KEY` from the environment. Convenient for CLI usage and examples.
+- The library must **never** hardcode, log, or persist API keys.
+
 ---
 
 ## 5. Dependencies
