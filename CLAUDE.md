@@ -258,6 +258,7 @@ docker compose build --no-cache
 - MVP dependencies: `zip`, `quick-xml`, `calamine`, `csv`, `serde_json`, `thiserror`
 - Every dependency MUST be pure Rust (no C bindings)
 - Minimize dependency count — do not add a crate for something achievable in <50 lines
+- **Before adding or upgrading any external crate**, check its latest stable version on [crates.io](https://crates.io/) (e.g., via `cargo search <crate>` or web search) and use that version. Do not blindly copy version numbers from old examples or memory — always verify the current latest stable release at the time of use.
 
 ### Testing — TDD Required
 
