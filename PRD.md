@@ -1,9 +1,9 @@
-# PRD: anytomd-rs
+# PRD: anytomd
 
 ## 1. Overview
 
 ### 1.1 Project Name
-**anytomd-rs**
+**anytomd**
 
 ### 1.2 Purpose
 A pure Rust library that converts various document formats into Markdown — a native Rust reimplementation of Microsoft's [MarkItDown](https://github.com/microsoft/markitdown) Python library.
@@ -17,7 +17,7 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 - **Process isolation overhead** — IPC between host application and Python sidecar
 - **Dependency hell** — transitive Python dependencies (`mammoth`, `pdfminer`, `openpyxl`, etc.)
 
-**anytomd-rs** solves this by providing the same document-to-Markdown conversion entirely in Rust, as a single `cargo add anytomd-rs` dependency with zero external runtime requirements.
+**anytomd** solves this by providing the same document-to-Markdown conversion entirely in Rust, as a single `cargo add anytomd` dependency with zero external runtime requirements.
 
 ### 1.4 Goals
 - **Feature parity** with MarkItDown's core document conversion capabilities
@@ -38,7 +38,7 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 
 ### 2.1 MarkItDown Feature Mapping
 
-| MarkItDown Feature | Python Library Used | anytomd-rs Approach | Priority |
+| MarkItDown Feature | Python Library Used | anytomd Approach | Priority |
 |-------------------|--------------------|--------------------|----------|
 | **DOCX → MD** | `mammoth` (DOCX→HTML→MD) | `zip` + `quick-xml` (direct OOXML→MD) | P0 (MVP) |
 | **PPTX → MD** | `python-pptx` | `zip` + `quick-xml` (direct OOXML→MD) | P0 (MVP) |
@@ -178,8 +178,9 @@ for warning in &result.warnings {
 
 ### 3.4 Package and Crate Naming
 
-- Crates.io package name: `anytomd-rs`
+- Crates.io package name: `anytomd`
 - Rust library crate name: `anytomd`
+- Repository name: `anytomd-rs`
 - All API examples use `anytomd::...` import path
 
 ### 3.5 Format Detection Precedence
@@ -224,7 +225,7 @@ word/_rels/document.xml.rels — relationship mappings (image refs)
 
 **MarkItDown comparison:**
 - MarkItDown: DOCX → HTML (via mammoth) → Markdown (via markdownify) — two conversion steps
-- anytomd-rs: DOCX → Markdown directly from OOXML XML — single step, no intermediate HTML
+- anytomd: DOCX → Markdown directly from OOXML XML — single step, no intermediate HTML
 
 ### 4.2 PPTX (P0)
 
@@ -395,7 +396,7 @@ impl GeminiDescriber {
 | Production / library default | `gemini-3-flash-preview` | Best quality for real-world image description |
 | CI integration tests | `gemini-2.5-flash-lite` | Lowest cost; sufficient to verify API integration works end-to-end |
 
-The `GeminiDescriber` must support model override via `with_model(api_key, model_name)` so that CI can use a different model without changing library defaults. CI tests should:
+The `GeminiDescriber` must support model override via builder style (for example, `GeminiDescriber::new(api_key).with_model(model_name.to_string())`) so that CI can use a different model without changing library defaults. CI tests should:
 - Only assert that the API returns a non-empty string (LLM output is non-deterministic)
 - Be conditional on the `GEMINI_API_KEY` secret being available
 - Be marked as allowed-to-fail to avoid blocking merges on transient API errors
@@ -567,7 +568,7 @@ fn test_resource_limit_adds_warning() {
 
 ### 8.3 Comparison Testing
 
-For validation, compare anytomd-rs output against MarkItDown output on the same input files. Markdown does not need exact string equality, but extracted content parity must be measurable:
+For validation, compare anytomd output against MarkItDown output on the same input files. Markdown does not need exact string equality, but extracted content parity must be measurable:
 
 - Normalize whitespace and punctuation, then compare token sets
 - Require token recall >= 95% for MVP formats (DOCX/PPTX/XLSX/CSV/JSON/TXT)
@@ -608,7 +609,7 @@ fn test_gemini_live_describe_image() {
             return;
         }
     };
-    let describer = GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite");
+    let describer = GeminiDescriber::new(api_key).with_model("gemini-2.5-flash-lite".to_string());
     let image_bytes = include_bytes!("fixtures/sample_image.png");
     let result = describer.describe(image_bytes, "image/png", "Describe this image.");
     assert!(result.is_ok());
@@ -651,7 +652,7 @@ fn test_gemini_live_describe_image() {
 - [ ] Image EXIF metadata extraction
 - [ ] EPUB converter
 - [ ] Markdown output normalization (consistent whitespace, line endings)
-- [ ] Optional CLI binary (`cargo install anytomd-rs`)
+- [ ] Optional CLI binary (`cargo install anytomd`)
 
 ### Future
 - [ ] `ImageDescriber` trait + Gemini-based example implementation
@@ -662,12 +663,12 @@ fn test_gemini_live_describe_image() {
 
 ---
 
-## 10. Comparison: anytomd-rs vs MarkItDown
+## 10. Comparison: anytomd vs MarkItDown
 
-| Aspect | MarkItDown (Python) | anytomd-rs (Rust) |
+| Aspect | MarkItDown (Python) | anytomd (Rust) |
 |--------|--------------------|--------------------|
 | Runtime | Python 3.10+ | None (native binary) |
-| Install | `pip install markitdown` | `cargo add anytomd-rs` |
+| Install | `pip install markitdown` | `cargo add anytomd` |
 | Binary size impact | ~50MB (PyInstaller) | Single-digit MB (target/profile dependent) |
 | DOCX approach | DOCX → HTML → MD (2 steps) | DOCX → MD directly (1 step) |
 | PDF approach | pdfminer + pdfplumber | pdf-extract (pure Rust) |

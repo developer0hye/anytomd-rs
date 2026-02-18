@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**anytomd-rs** is a pure Rust reimplementation of Microsoft's [MarkItDown](https://github.com/microsoft/markitdown) Python library. It converts various document formats (DOCX, PPTX, XLSX, PDF, HTML, CSV, JSON, etc.) into Markdown, targeting LLM consumption. A single `cargo add anytomd-rs` with zero external runtime.
+**anytomd** (repository: `anytomd-rs`) is a pure Rust reimplementation of Microsoft's [MarkItDown](https://github.com/microsoft/markitdown) Python library. It converts various document formats (DOCX, PPTX, XLSX, PDF, HTML, CSV, JSON, etc.) into Markdown, targeting LLM consumption. A single `cargo add anytomd` with zero external runtime.
 
 **Current phase: MVP (v0.1.0)** — DOCX, PPTX, XLSX, CSV, JSON, Plain Text. See [PRD.md](./PRD.md) for full architecture and milestones.
 
@@ -57,7 +57,7 @@ Gemini CI tests do NOT run on every PR to prevent API quota abuse.
 - `GEMINI_API_KEY` stored as GitHub Actions repository secret
 - CI condition: `if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:gemini')`
 - Fork PRs with `ci:gemini`: use `pull_request_target` with `ref: ${{ github.event.pull_request.head.sha }}` — only after code review
-- CI tests use `GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite")` and only assert non-empty response (LLM output is non-deterministic)
+- CI tests use `GeminiDescriber::new(api_key).with_model("gemini-2.5-flash-lite".to_string())` and only assert non-empty response (LLM output is non-deterministic)
 - Gemini tests must be **additive** — existing tests must pass without the secret
 - Gemini test failures (rate limits, transient errors) must NOT block CI — allowed-to-fail
 - **Never add `ci:gemini` label without reviewing the PR diff first**
