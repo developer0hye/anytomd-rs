@@ -10,7 +10,8 @@ repository = "https://github.com/developer0hye/anytomd-rs"
 [dependencies]
 zip = "2"
 quick-xml = "0.37"
-calamine = "0.26"
+calamine = { version = "0.26", features = ["dates"] }
+chrono = { version = "0.4", default-features = false }
 csv = "1"
 serde_json = "1"
 ego-tree = "0.10"
