@@ -4,6 +4,7 @@ pub mod json_conv;
 pub mod plain_text;
 pub mod pptx;
 pub mod xlsx;
+pub mod xml_conv;
 
 use crate::error::ConvertError;
 
