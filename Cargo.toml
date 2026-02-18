@@ -7,6 +7,10 @@ license = "Apache-2.0"
 description = "Pure Rust library that converts various document formats into Markdown"
 repository = "https://github.com/developer0hye/anytomd-rs"
 
+[features]
+default = []
+gemini = ["dep:ureq", "dep:base64"]
+
 [dependencies]
 zip = "2"
 quick-xml = "0.37"
@@ -18,3 +22,5 @@ ego-tree = "0.10"
 scraper = "0.22"
 encoding_rs = "0.8"
 thiserror = "2"
+ureq = { version = "3", optional = true }
+base64 = { version = "0.22", optional = true }

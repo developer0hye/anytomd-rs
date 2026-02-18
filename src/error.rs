@@ -24,4 +24,7 @@ pub enum ConvertError {
 
     #[error("malformed document: {reason}")]
     MalformedDocument { reason: String },
+
+    #[error("image description failed: {reason}")]
+    ImageDescriptionError { reason: String },
 }
