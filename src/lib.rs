@@ -47,12 +47,14 @@ pub fn convert_bytes(
     use converter::plain_text::PlainTextConverter;
     use converter::pptx::PptxConverter;
     use converter::xlsx::XlsxConverter;
+    use converter::xml_conv::XmlConverter;
 
     let converters: Vec<Box<dyn Converter>> = vec![
         Box::new(DocxConverter),
         Box::new(PptxConverter),
         Box::new(XlsxConverter),
         Box::new(JsonConverter),
+        Box::new(XmlConverter),
         Box::new(CsvConverter),
         Box::new(PlainTextConverter),
     ];
