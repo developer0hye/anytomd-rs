@@ -50,6 +50,7 @@ enum ShapeContent {
     },
     Image {
         rel_id: String,
+        alt_text: Option<String>,
     },
 }
 
@@ -265,6 +266,7 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
 
     // Image state
     let mut current_blip_rel_id: Option<String> = None;
+    let mut current_image_alt: Option<String> = None;
 
     // Track depth for nested elements
     let mut shape_depth: u32 = 0;
@@ -292,6 +294,7 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
                         in_picture = true;
                         picture_depth = 1;
                         current_blip_rel_id = None;
+                        current_image_alt = None;
                     }
                     _ if in_shape => {
                         shape_depth += 1;
@@ -323,7 +326,12 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
                     }
                     _ if in_picture => {
                         picture_depth += 1;
-                        handle_picture_start(local_str, e, &mut current_blip_rel_id);
+                        handle_picture_start(
+                            local_str,
+                            e,
+                            &mut current_blip_rel_id,
+                            &mut current_image_alt,
+                        );
                     }
                     _ => {}
                 }
@@ -343,7 +351,12 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
                 } else if in_graphic_frame {
                     handle_graphic_frame_empty(local_str, in_cell_run, &mut current_cell);
                 } else if in_picture {
-                    handle_picture_start(local_str, e, &mut current_blip_rel_id);
+                    handle_picture_start(
+                        local_str,
+                        e,
+                        &mut current_blip_rel_id,
+                        &mut current_image_alt,
+                    );
                 }
             }
             Ok(Event::Text(ref e)) => {
@@ -453,9 +466,13 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
 
                     if picture_depth == 0 {
                         if let Some(rel_id) = current_blip_rel_id.take() {
-                            shapes.push(ShapeContent::Image { rel_id });
+                            shapes.push(ShapeContent::Image {
+                                rel_id,
+                                alt_text: current_image_alt.take(),
+                            });
                         }
                         in_picture = false;
+                        current_image_alt = None;
                     }
                 }
             }
@@ -614,15 +631,31 @@ fn handle_picture_start(
     local_str: &str,
     e: &quick_xml::events::BytesStart,
     current_blip_rel_id: &mut Option<String>,
+    current_image_alt: &mut Option<String>,
 ) {
-    if local_str == "blip" {
-        for attr in e.attributes().flatten() {
-            let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-            if key == "r:embed" || key.ends_with(":embed") {
-                let val = String::from_utf8_lossy(&attr.value).to_string();
-                *current_blip_rel_id = Some(val);
+    match local_str {
+        "blip" => {
+            for attr in e.attributes().flatten() {
+                let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                if key == "r:embed" || key.ends_with(":embed") {
+                    let val = String::from_utf8_lossy(&attr.value).to_string();
+                    *current_blip_rel_id = Some(val);
+                }
             }
         }
+        "cNvPr" => {
+            for attr in e.attributes().flatten() {
+                let local_name = attr.key.local_name();
+                let key = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                if key == "descr" {
+                    let val = String::from_utf8_lossy(&attr.value).to_string();
+                    if !val.is_empty() {
+                        *current_image_alt = Some(val);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -841,9 +874,10 @@ fn render_slide(
                 out.push_str(&build_table(&header_refs, &row_refs));
                 out.push('\n');
             }
-            ShapeContent::Image { rel_id } => {
+            ShapeContent::Image { rel_id, alt_text } => {
                 if let Some(filename) = image_filenames.get(rel_id) {
-                    out.push_str(&format!("![]({filename})\n\n"));
+                    let alt = alt_text.as_deref().unwrap_or("");
+                    out.push_str(&format!("![{alt}]({filename})\n\n"));
                 }
             }
         }
@@ -950,7 +984,7 @@ impl Converter for PptxConverter {
             // Resolve image filenames and optionally extract image data
             let mut image_filenames: HashMap<String, String> = HashMap::new();
             for shape in &shapes {
-                if let ShapeContent::Image { rel_id } = shape {
+                if let ShapeContent::Image { rel_id, .. } = shape {
                     if let Some(rel) = slide_rels.get(rel_id) {
                         let image_path = resolve_relative_path(&slide_info.path, &rel.target);
                         let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
@@ -1023,7 +1057,8 @@ mod tests {
         body_texts: Vec<&'a str>,
         notes: Option<&'a str>,
         table: Option<TestTable<'a>>,
-        images: Vec<&'a str>, // rel IDs for image references
+        images: Vec<&'a str>,                  // rel IDs for image references
+        image_alt_texts: Vec<Option<&'a str>>, // alt text per image (parallel to images)
     }
 
     struct TestTable<'a> {
@@ -1176,8 +1211,14 @@ mod tests {
 
         // Image shapes
         for (idx, rel_id) in slide.images.iter().enumerate() {
+            let descr_attr = slide
+                .image_alt_texts
+                .get(idx)
+                .and_then(|a| *a)
+                .map(|alt| format!(r#" descr="{alt}""#))
+                .unwrap_or_default();
             xml.push_str(&format!(
-                r#"<p:pic><p:nvPicPr><p:cNvPr id="{}" name="Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="{rel_id}"/></p:blipFill></p:pic>"#,
+                r#"<p:pic><p:nvPicPr><p:cNvPr id="{}"{descr_attr} name="Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="{rel_id}"/></p:blipFill></p:pic>"#,
                 10 + idx
             ));
         }
@@ -1243,6 +1284,7 @@ mod tests {
             notes: None,
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1261,6 +1303,7 @@ mod tests {
                 notes: None,
                 table: None,
                 images: vec![],
+                image_alt_texts: vec![],
             },
             TestSlide {
                 title: Some("Second"),
@@ -1268,6 +1311,7 @@ mod tests {
                 notes: None,
                 table: None,
                 images: vec![],
+                image_alt_texts: vec![],
             },
         ]);
         let converter = PptxConverter;
@@ -1287,6 +1331,7 @@ mod tests {
             notes: None,
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1319,6 +1364,7 @@ mod tests {
                 notes: None,
                 table: None,
                 images: vec![],
+                image_alt_texts: vec![],
             },
             TestSlide {
                 title: Some("Second Slide"),
@@ -1326,6 +1372,7 @@ mod tests {
                 notes: None,
                 table: None,
                 images: vec![],
+                image_alt_texts: vec![],
             },
         ]);
         let converter = PptxConverter;
@@ -1390,6 +1437,7 @@ mod tests {
                 rows: vec![vec!["Alpha", "100"], vec!["Beta", "200"]],
             }),
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1412,6 +1460,7 @@ mod tests {
                 rows: vec![vec!["1", "", "3"]],
             }),
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1429,6 +1478,7 @@ mod tests {
             notes: Some("This is a speaker note."),
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1445,6 +1495,7 @@ mod tests {
             notes: Some("First line\nSecond line\nThird line"),
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1463,6 +1514,7 @@ mod tests {
             notes: None,
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1479,6 +1531,7 @@ mod tests {
             notes: None,
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1498,6 +1551,7 @@ mod tests {
             notes: None,
             table: None,
             images: vec![],
+            image_alt_texts: vec![],
         }]);
         let converter = PptxConverter;
         let result = converter
@@ -1606,9 +1660,62 @@ mod tests {
         let (shapes, _) = parse_slide(slide_xml);
         assert_eq!(shapes.len(), 1);
         match &shapes[0] {
-            ShapeContent::Image { rel_id } => assert_eq!(rel_id, "rId2"),
+            ShapeContent::Image { rel_id, .. } => assert_eq!(rel_id, "rId2"),
             other => panic!("expected Image, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_pptx_image_alt_text_extracted() {
+        let slide_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:nvPicPr><p:cNvPr id="10" descr="A beautiful chart" name="Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#;
+
+        let (shapes, _) = parse_slide(slide_xml);
+        assert_eq!(shapes.len(), 1);
+        match &shapes[0] {
+            ShapeContent::Image { rel_id, alt_text } => {
+                assert_eq!(rel_id, "rId2");
+                assert_eq!(alt_text.as_deref(), Some("A beautiful chart"));
+            }
+            other => panic!("expected Image, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_pptx_image_alt_text_missing() {
+        let slide_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:pic><p:nvPicPr><p:cNvPr id="10" name="Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>"#;
+
+        let (shapes, _) = parse_slide(slide_xml);
+        assert_eq!(shapes.len(), 1);
+        match &shapes[0] {
+            ShapeContent::Image { rel_id, alt_text } => {
+                assert_eq!(rel_id, "rId3");
+                assert!(alt_text.is_none());
+            }
+            other => panic!("expected Image, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_pptx_image_alt_text_in_markdown() {
+        let data = build_test_pptx(&[TestSlide {
+            title: Some("Images"),
+            body_texts: vec![],
+            notes: None,
+            table: None,
+            images: vec!["rIdImg1"],
+            image_alt_texts: vec![Some("A diagram of the architecture")],
+        }]);
+        let converter = PptxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![A diagram of the architecture](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
     }
 
     #[test]
