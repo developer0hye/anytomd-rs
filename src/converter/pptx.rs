@@ -914,6 +914,8 @@ impl Converter for PptxConverter {
         let cursor = Cursor::new(data);
         let mut archive = ZipArchive::new(cursor)?;
 
+        crate::zip_utils::validate_zip_budget(&mut archive, options.max_uncompressed_zip_bytes)?;
+
         let mut warnings: Vec<ConversionWarning> = Vec::new();
         let mut images: Vec<(String, Vec<u8>)> = Vec::new();
 

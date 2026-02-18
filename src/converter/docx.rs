@@ -27,6 +27,7 @@ enum ParagraphKind {
 #[derive(Debug, Clone)]
 struct Relationship {
     target: String,
+    rel_type: String,
 }
 
 /// A numbering level definition from numbering.xml.
@@ -49,6 +50,21 @@ fn read_zip_text(
     };
     let mut buf = String::new();
     file.read_to_string(&mut buf)?;
+    Ok(Some(buf))
+}
+
+/// Read raw bytes from a ZIP archive, returning None if not found.
+fn read_zip_bytes(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<Option<Vec<u8>>, ConvertError> {
+    let mut file = match archive.by_name(path) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(ConvertError::ZipError(e)),
+    };
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
     Ok(Some(buf))
 }
 
@@ -158,6 +174,7 @@ fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
                 if local_str == "Relationship" {
                     let mut id = None;
                     let mut target = None;
+                    let mut rel_type = String::new();
 
                     for attr in e.attributes().flatten() {
                         let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
@@ -165,12 +182,13 @@ fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
                         match key {
                             "Id" => id = Some(val),
                             "Target" => target = Some(val),
+                            "Type" => rel_type = val,
                             _ => {}
                         }
                     }
 
                     if let (Some(id), Some(target)) = (id, target) {
-                        rels.insert(id, Relationship { target });
+                        rels.insert(id, Relationship { target, rel_type });
                     }
                 }
             }
@@ -861,10 +879,12 @@ impl Converter for DocxConverter {
     fn convert(
         &self,
         data: &[u8],
-        _options: &ConversionOptions,
+        options: &ConversionOptions,
     ) -> Result<ConversionResult, ConvertError> {
         let cursor = Cursor::new(data);
         let mut archive = ZipArchive::new(cursor)?;
+
+        crate::zip_utils::validate_zip_budget(&mut archive, options.max_uncompressed_zip_bytes)?;
 
         // 1. Parse styles.xml (optional)
         let styles = match read_zip_text(&mut archive, "word/styles.xml")? {
@@ -891,14 +911,50 @@ impl Converter for DocxConverter {
             }
         })?;
 
-        let (markdown, title, warnings) =
+        let (markdown, title, mut warnings) =
             parse_document(&document_xml, &styles, &relationships, &numbering);
+
+        // 5. Extract embedded images if requested
+        let mut images: Vec<(String, Vec<u8>)> = Vec::new();
+        if options.extract_images {
+            let mut total_image_bytes: usize = 0;
+            for rel in relationships.values() {
+                if !rel.rel_type.contains("image") {
+                    continue;
+                }
+                if total_image_bytes >= options.max_total_image_bytes {
+                    break;
+                }
+                let image_path = format!("word/{}", rel.target);
+                if let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path) {
+                    total_image_bytes += img_data.len();
+                    if total_image_bytes <= options.max_total_image_bytes {
+                        let filename = rel
+                            .target
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&rel.target)
+                            .to_string();
+                        images.push((filename, img_data));
+                    } else {
+                        warnings.push(ConversionWarning {
+                            code: WarningCode::ResourceLimitReached,
+                            message: format!(
+                                "total image bytes exceeded limit ({})",
+                                options.max_total_image_bytes
+                            ),
+                            location: Some(image_path),
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(ConversionResult {
             markdown,
             title,
+            images,
             warnings,
-            ..Default::default()
         })
     }
 }
@@ -1552,6 +1608,149 @@ mod tests {
         assert_eq!(
             result.get(&("1".to_string(), 0)).map(|n| n.ordered),
             Some(true)
+        );
+    }
+
+    // ---- Resource limit tests ----
+
+    #[test]
+    fn test_docx_zip_budget_exceeded_returns_error() {
+        let doc = wrap_body(&para("Hello"));
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        // Set budget to 1 byte — any real DOCX will exceed this
+        let options = ConversionOptions {
+            max_uncompressed_zip_bytes: 1,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("input too large"),
+            "error was: {err}"
+        );
+    }
+
+    #[test]
+    fn test_docx_relationship_type_captured() {
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>"#;
+        let result = parse_relationships(rels);
+        assert_eq!(
+            result.get("rId1").map(|r| r.rel_type.as_str()),
+            Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/image")
+        );
+        assert_eq!(
+            result.get("rId2").map(|r| r.rel_type.as_str()),
+            Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink")
+        );
+    }
+
+    // ---- Image extraction tests ----
+
+    /// Helper: build a DOCX with an embedded image file.
+    fn build_test_docx_with_image(
+        document_xml: &str,
+        rels_xml: &str,
+        image_path: &str,
+        image_data: &[u8],
+    ) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let mut zip = ZipWriter::new(Cursor::new(buf));
+        let opts = SimpleFileOptions::default();
+
+        // [Content_Types].xml
+        let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        zip.start_file("[Content_Types].xml", opts).unwrap();
+        zip.write_all(ct.as_bytes()).unwrap();
+
+        // _rels/.rels
+        zip.start_file("_rels/.rels", opts).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+        )
+        .unwrap();
+
+        // word/document.xml
+        zip.start_file("word/document.xml", opts).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+
+        // word/_rels/document.xml.rels
+        zip.start_file("word/_rels/document.xml.rels", opts)
+            .unwrap();
+        zip.write_all(rels_xml.as_bytes()).unwrap();
+
+        // Image file
+        zip.start_file(image_path, opts).unwrap();
+        zip.write_all(image_data).unwrap();
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn test_docx_image_extraction_enabled() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Test image"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data-for-test";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(!result.images.is_empty(), "expected extracted images");
+        assert_eq!(result.images[0].0, "image1.png");
+        assert_eq!(result.images[0].1, fake_png);
+    }
+
+    #[test]
+    fn test_docx_image_extraction_disabled_by_default() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Test"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.images.is_empty());
+    }
+
+    #[test]
+    fn test_docx_image_extraction_respects_budget() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Big"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = vec![0u8; 1024]; // 1 KB image
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", &fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            max_total_image_bytes: 100, // Budget smaller than image
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        // Image should not be extracted (exceeds budget)
+        assert!(result.images.is_empty());
+        // Should have a ResourceLimitReached warning
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::ResourceLimitReached),
+            "expected ResourceLimitReached warning, got: {:?}",
+            result.warnings
         );
     }
 }

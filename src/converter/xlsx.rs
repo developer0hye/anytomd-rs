@@ -98,8 +98,16 @@ impl Converter for XlsxConverter {
     fn convert(
         &self,
         data: &[u8],
-        _options: &ConversionOptions,
+        options: &ConversionOptions,
     ) -> Result<ConversionResult, ConvertError> {
+        // Pre-scan ZIP budget before passing to calamine
+        if let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(data)) {
+            crate::zip_utils::validate_zip_budget(
+                &mut archive,
+                options.max_uncompressed_zip_bytes,
+            )?;
+        }
+
         let cursor = Cursor::new(data);
         let mut workbook = open_workbook_auto_from_rs(cursor)?;
 

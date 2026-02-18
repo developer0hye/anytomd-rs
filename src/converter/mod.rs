@@ -35,6 +35,10 @@ pub struct ConversionOptions {
     pub max_total_image_bytes: usize,
     /// If true, return an error on recoverable parse failures instead of warnings.
     pub strict: bool,
+    /// Maximum input file size in bytes. Files larger than this are rejected.
+    pub max_input_bytes: usize,
+    /// Maximum total uncompressed size of entries in a ZIP-based document.
+    pub max_uncompressed_zip_bytes: usize,
 }
 
 impl Default for ConversionOptions {
@@ -43,6 +47,8 @@ impl Default for ConversionOptions {
             extract_images: false,
             max_total_image_bytes: 50 * 1024 * 1024, // 50 MB
             strict: false,
+            max_input_bytes: 100 * 1024 * 1024, // 100 MB
+            max_uncompressed_zip_bytes: 500 * 1024 * 1024, // 500 MB
         }
     }
 }

@@ -2,6 +2,7 @@ pub mod converter;
 pub mod detection;
 pub mod error;
 pub mod markdown;
+pub(crate) mod zip_utils;
 
 pub use converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -19,6 +20,13 @@ pub fn convert_file(
 ) -> Result<ConversionResult, ConvertError> {
     let path = path.as_ref();
     let data = std::fs::read(path)?;
+
+    if data.len() > options.max_input_bytes {
+        return Err(ConvertError::InputTooLarge {
+            size: data.len(),
+            limit: options.max_input_bytes,
+        });
+    }
 
     let header = &data[..data.len().min(16)];
     let format = detection::detect_format(path, header);
@@ -41,6 +49,13 @@ pub fn convert_bytes(
     extension: &str,
     options: &ConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
+    if data.len() > options.max_input_bytes {
+        return Err(ConvertError::InputTooLarge {
+            size: data.len(),
+            limit: options.max_input_bytes,
+        });
+    }
+
     use converter::csv_conv::CsvConverter;
     use converter::docx::DocxConverter;
     use converter::html::HtmlConverter;
@@ -70,4 +85,57 @@ pub fn convert_bytes(
     Err(ConvertError::UnsupportedFormat {
         extension: extension.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_bytes_input_too_large() {
+        let data = vec![0u8; 1024];
+        let options = ConversionOptions {
+            max_input_bytes: 512,
+            ..Default::default()
+        };
+        let result = convert_bytes(&data, "txt", &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("input too large"),
+            "error was: {err}"
+        );
+    }
+
+    #[test]
+    fn test_convert_bytes_at_exact_limit_succeeds() {
+        let data = b"Hello, world!";
+        let options = ConversionOptions {
+            max_input_bytes: data.len(),
+            ..Default::default()
+        };
+        let result = convert_bytes(data, "txt", &options);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_convert_file_input_too_large() {
+        // Use existing sample.csv fixture with a tiny limit
+        let path = std::path::Path::new("tests/fixtures/sample.csv");
+        if !path.exists() {
+            return; // Skip if fixture not available
+        }
+        let file_size = std::fs::metadata(path).unwrap().len() as usize;
+        let options = ConversionOptions {
+            max_input_bytes: file_size.saturating_sub(1).max(1),
+            ..Default::default()
+        };
+        let result = convert_file(path, &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("input too large"),
+            "error was: {err}"
+        );
+    }
 }
