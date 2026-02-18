@@ -67,8 +67,8 @@ anytomd-rs supports optional LLM-based image description via the `ImageDescriber
 - Use **Google Gemini** as the default LLM provider for built-in / example implementations
 - Default model: **`gemini-3-flash-preview`**
 - When developing or updating any Gemini-related code (API calls, authentication, model parameters, request/response formats), **always consult the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs)** for the latest specs — do NOT rely on cached knowledge or outdated examples
-- API keys are the caller's responsibility — the library never stores or manages credentials
 - The `ImageDescriber` trait is provider-agnostic: Gemini is the default, but any LLM backend can be used
+- **API key management:** The `ImageDescriber` trait has no key concept. The built-in `GeminiDescriber` accepts a key via struct field (`new(api_key)`) and also provides an env-var fallback (`from_env()` reads `GEMINI_API_KEY`). Never hardcode, log, or persist API keys in library code.
 
 ---
 
