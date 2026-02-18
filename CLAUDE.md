@@ -79,9 +79,26 @@ CI runs real Gemini API calls to verify end-to-end image description. To minimiz
 | Production / library default | `gemini-3-flash-preview` | Best quality for real-world usage |
 | CI integration tests | `gemini-2.5-flash-lite` | Cheapest model; sufficient for verifying API integration works |
 
-**How it works:**
+**Trigger policy — who can run Gemini tests:**
+
+To prevent abuse (malicious PRs draining API quota), Gemini CI tests do NOT run on every PR. The trigger rules are:
+
+| Event | Gemini tests? | Why |
+|-------|---------------|-----|
+| `push` (any branch) | **Yes, automatically** | Only repo owner/collaborators can push — trusted by definition |
+| `pull_request` (default) | **No** | External contributors can open PRs freely — must be gated |
+| `pull_request` with `ci:gemini` label | **Yes** | Owner explicitly approved this PR for Gemini testing |
+
+**Workflow:**
+1. An external PR is opened → basic CI runs (fmt, clippy, tests, release build) — no Gemini
+2. Owner reviews the code for safety (no secret exfiltration, no malicious test modifications)
+3. Owner adds the **`ci:gemini`** label to the PR → Gemini integration tests run
+4. Owner's own pushes (branches, PRs, merges to main) → Gemini tests always run automatically
+
+**Implementation notes:**
 - The `GEMINI_API_KEY` secret is stored as a **GitHub Actions repository secret**
-- CI Gemini tests are **conditionally executed** — they only run when the `GEMINI_API_KEY` secret is available. PRs from forks (which cannot access secrets) skip these tests gracefully.
+- The Gemini job uses a condition like: `if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:gemini')`
+- For fork PRs with the `ci:gemini` label, use `pull_request_target` event (which can access secrets) with `ref: ${{ github.event.pull_request.head.sha }}` — but **only after code review**, since this runs untrusted code with secret access
 - Tests use `GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite")` to override the default model
 - CI tests verify that the API returns a non-empty description without errors — they do NOT assert on the content of the description (LLM output is non-deterministic)
 
@@ -90,6 +107,7 @@ CI runs real Gemini API calls to verify end-to-end image description. To minimiz
 - CI Gemini tests must be **additive** — all existing tests (unit + integration with mock describers) must continue to pass without the `GEMINI_API_KEY` secret
 - If a CI Gemini test fails due to API rate limits or transient errors, it should NOT block the overall CI pipeline — mark these tests as allowed-to-fail or use retry logic
 - When adding new CI Gemini tests, always test with `gemini-2.5-flash-lite` — never use the production model in CI
+- **Never add the `ci:gemini` label without reviewing the PR diff first** — the label grants secret access to the PR's code
 
 ---
 
@@ -406,10 +424,11 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - cargo build --release      # Release build must succeed
 ```
 
-**Gemini feature CI checks (conditional):**
+**Gemini feature CI checks (runs on `push` or `ci:gemini` labeled PRs only):**
 ```yaml
-# These steps run ONLY when the GEMINI_API_KEY secret is available.
-# They use gemini-2.5-flash-lite to minimize cost.
+# Triggered by: push events (owner's own work) OR PRs with the ci:gemini label.
+# Never runs on unlabeled external PRs.
+# Uses gemini-2.5-flash-lite to minimize cost.
 - cargo test --features gemini                      # All tests with gemini feature
 - cargo clippy --features gemini -- -D warnings     # Lint with gemini feature
 - cargo test --features gemini --test test_gemini_live  # Live API integration test (allowed-to-fail)
@@ -425,3 +444,4 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - If a new converter is added without tests, CI should be considered incomplete — add tests before merging
 - CI must use a stable Rust toolchain compatible with `rust-version` in `Cargo.toml`
 - Gemini live API tests are **optional** — they should not block merging if they fail due to transient API issues. All other CI steps (fmt, clippy, unit tests, mock-based integration tests) remain mandatory.
+- The `ci:gemini` label must only be added after reviewing the PR diff — it grants the PR access to the `GEMINI_API_KEY` secret

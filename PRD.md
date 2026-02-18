@@ -578,6 +578,18 @@ For validation, compare anytomd-rs output against MarkItDown output on the same 
 
 CI includes optional live Gemini API integration tests that verify the `GeminiDescriber` works end-to-end with a real API call.
 
+**Trigger policy:**
+
+Gemini tests consume real API quota, so they are gated to prevent abuse from external PRs:
+
+| CI trigger | Gemini tests run? | Reason |
+|------------|-------------------|--------|
+| `push` (any branch) | Yes, automatically | Only repo owner/collaborators can push |
+| `pull_request` (default) | No | External PRs are untrusted — must be gated |
+| `pull_request` with `ci:gemini` label | Yes | Owner explicitly approved after code review |
+
+The owner must **review the PR diff before adding the `ci:gemini` label** — the label grants the PR's code access to the `GEMINI_API_KEY` secret.
+
 **Structure:**
 - Live tests live in `tests/test_gemini_live.rs` (or similar), gated behind the `gemini` feature
 - Each test reads the `GEMINI_API_KEY` environment variable — if absent, the test is skipped (not failed)
