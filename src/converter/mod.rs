@@ -203,6 +203,31 @@ pub(crate) fn mime_from_image(filename: &str, data: &[u8]) -> &'static str {
     }
 }
 
+/// Replace a single image placeholder with its description in the markdown.
+///
+/// Finds the first occurrence of `![{placeholder}]({filename})` and replaces the
+/// placeholder with the description. Uses unique placeholders to avoid ambiguity
+/// with duplicate filenames.
+pub(crate) fn replace_image_alt_by_placeholder(
+    markdown: &str,
+    placeholder: &str,
+    description: &str,
+    filename: &str,
+) -> String {
+    let target = format!("![{placeholder}]({filename})");
+    let replacement = format!("![{description}]({filename})");
+    // Replace exactly ONE occurrence
+    if let Some(pos) = markdown.find(&target) {
+        let mut result = String::with_capacity(markdown.len());
+        result.push_str(&markdown[..pos]);
+        result.push_str(&replacement);
+        result.push_str(&markdown[pos + target.len()..]);
+        result
+    } else {
+        markdown.to_string()
+    }
+}
+
 /// Trait implemented by each format-specific converter.
 pub trait Converter {
     /// Returns the file extensions this converter supports (e.g., `["docx"]`).

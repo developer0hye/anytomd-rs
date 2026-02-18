@@ -19,8 +19,12 @@ pub struct DocxConverter;
 #[derive(Debug, Clone, PartialEq)]
 enum ParagraphKind {
     Normal,
-    Heading(u8),                           // level 1..=6
-    ListItem { ordered: bool, level: u8 }, // list item from numbering
+    Heading(u8), // level 1..=6
+    ListItem {
+        ordered: bool,
+        level: u8,
+        num_id: String,
+    }, // list item from numbering
 }
 
 /// A resolved relationship entry from document.xml.rels.
@@ -339,17 +343,68 @@ fn is_ordered_format(fmt: &str) -> bool {
     )
 }
 
+// ---- Run segment merging ----
+
+/// A segment of text within a run, with formatting info.
+#[derive(Debug, Clone)]
+struct RunSegment {
+    text: String,
+    bold: bool,
+    italic: bool,
+}
+
+/// Merge adjacent segments with the same formatting, then apply `wrap_formatting`
+/// once per merged group.
+fn merge_and_format_runs(runs: &[RunSegment]) -> String {
+    if runs.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::new();
+    let mut i = 0;
+    while i < runs.len() {
+        let bold = runs[i].bold;
+        let italic = runs[i].italic;
+        let mut merged_text = runs[i].text.clone();
+        let mut j = i + 1;
+        while j < runs.len() && runs[j].bold == bold && runs[j].italic == italic {
+            merged_text.push_str(&runs[j].text);
+            j += 1;
+        }
+        result.push_str(&wrap_formatting(&merged_text, bold, italic));
+        i = j;
+    }
+
+    result
+}
+
 // ---- Document body parsing ----
+
+/// Information about an image found during parsing.
+#[derive(Debug, Clone)]
+struct ImageInfo {
+    placeholder: String,
+    original_alt: String,
+    filename: String,
+}
 
 /// Parse the main document.xml body and produce Markdown output.
 ///
-/// Returns (markdown, title, warnings).
+/// Returns (markdown, title, warnings, image_infos).
+/// Images are emitted with unique placeholder alt text `__img_N__`.
+/// `image_counter` is incremented for each image to ensure uniqueness.
 fn parse_document(
     xml: &str,
     styles: &HashMap<String, u8>,
     relationships: &HashMap<String, Relationship>,
     numbering: &HashMap<(String, u8), NumberingLevel>,
-) -> (String, Option<String>, Vec<ConversionWarning>) {
+    image_counter: &mut usize,
+) -> (
+    String,
+    Option<String>,
+    Vec<ConversionWarning>,
+    Vec<ImageInfo>,
+) {
     let mut reader = Reader::from_str(xml);
 
     let mut warnings = Vec::new();
@@ -360,7 +415,7 @@ fn parse_document(
     let mut in_body = false;
     let mut in_paragraph = false;
     let mut current_para_kind = ParagraphKind::Normal;
-    let mut current_para_text = String::new();
+    let mut current_para_runs: Vec<RunSegment> = Vec::new();
 
     // Run-level state
     let mut in_run = false;
@@ -374,7 +429,7 @@ fn parse_document(
     // Hyperlink state
     let mut in_hyperlink = false;
     let mut current_hyperlink_url: Option<String> = None;
-    let mut hyperlink_text = String::new();
+    let mut hyperlink_runs: Vec<RunSegment> = Vec::new();
 
     // Paragraph properties state (for list detection)
     let mut in_para_properties = false;
@@ -400,6 +455,9 @@ fn parse_document(
     let mut in_drawing = false;
     let mut current_image_alt: Option<String> = None;
     let mut current_image_rel_id: Option<String> = None;
+
+    // Image info tracking for placeholder-based replacement
+    let mut image_infos: Vec<ImageInfo> = Vec::new();
 
     loop {
         match reader.read_event() {
@@ -427,7 +485,7 @@ fn parse_document(
                     "p" if in_body => {
                         in_paragraph = true;
                         current_para_kind = ParagraphKind::Normal;
-                        current_para_text.clear();
+                        current_para_runs.clear();
                         current_num_id = None;
                         current_ilvl = None;
                     }
@@ -472,7 +530,7 @@ fn parse_document(
                     }
                     "hyperlink" if in_paragraph => {
                         in_hyperlink = true;
-                        hyperlink_text.clear();
+                        hyperlink_runs.clear();
                         current_hyperlink_url = None;
 
                         for attr in e.attributes().flatten() {
@@ -578,10 +636,15 @@ fn parse_document(
                         current_run_italic = !is_val_false(e);
                     }
                     "br" if in_run => {
+                        let seg = RunSegment {
+                            text: "\n".to_string(),
+                            bold: false,
+                            italic: false,
+                        };
                         if in_hyperlink {
-                            hyperlink_text.push('\n');
+                            hyperlink_runs.push(seg);
                         } else {
-                            current_para_text.push('\n');
+                            current_para_runs.push(seg);
                         }
                     }
                     "hyperlink" if in_paragraph => {
@@ -614,11 +677,15 @@ fn parse_document(
             Ok(Event::Text(ref e)) => {
                 if in_text && in_run {
                     let text = e.unescape().unwrap_or_default().to_string();
-                    let formatted = wrap_formatting(&text, current_run_bold, current_run_italic);
+                    let seg = RunSegment {
+                        text,
+                        bold: current_run_bold,
+                        italic: current_run_italic,
+                    };
                     if in_hyperlink {
-                        hyperlink_text.push_str(&formatted);
+                        hyperlink_runs.push(seg);
                     } else {
-                        current_para_text.push_str(&formatted);
+                        current_para_runs.push(seg);
                     }
                 }
             }
@@ -665,8 +732,12 @@ fn parse_document(
                             current_para_kind = ParagraphKind::ListItem {
                                 ordered,
                                 level: ilvl,
+                                num_id: num_id.clone(),
                             };
                         }
+
+                        // Merge runs into final paragraph text
+                        let current_para_text = merge_and_format_runs(&current_para_runs);
 
                         if in_table_cell {
                             // In a table cell: accumulate text
@@ -690,7 +761,7 @@ fn parse_document(
                             last_was_list = is_list;
                         }
                         in_paragraph = false;
-                        current_para_text.clear();
+                        current_para_runs.clear();
                         current_num_id = None;
                         current_ilvl = None;
                     }
@@ -701,13 +772,19 @@ fn parse_document(
                         in_num_pr = false;
                     }
                     "hyperlink" if in_hyperlink => {
-                        if let Some(ref url) = current_hyperlink_url {
-                            current_para_text.push_str(&format!("[{}]({})", hyperlink_text, url));
+                        let link_text = merge_and_format_runs(&hyperlink_runs);
+                        let link_md = if let Some(ref url) = current_hyperlink_url {
+                            format!("[{}]({})", link_text, url)
                         } else {
-                            current_para_text.push_str(&hyperlink_text);
-                        }
+                            link_text
+                        };
+                        current_para_runs.push(RunSegment {
+                            text: link_md,
+                            bold: false,
+                            italic: false,
+                        });
                         in_hyperlink = false;
-                        hyperlink_text.clear();
+                        hyperlink_runs.clear();
                         current_hyperlink_url = None;
                     }
                     "rPr" => {
@@ -723,7 +800,7 @@ fn parse_document(
                         in_text = false;
                     }
                     "drawing" if in_drawing => {
-                        // Emit image markdown
+                        // Emit image markdown with unique placeholder
                         if let Some(ref rel_id) = current_image_rel_id {
                             let filename = relationships
                                 .get(rel_id)
@@ -734,12 +811,25 @@ fn parse_document(
                                 .unwrap_or_default();
 
                             if !filename.is_empty() {
-                                let alt = current_image_alt.as_deref().unwrap_or("");
-                                let img_md = format!("![{alt}]({filename})");
+                                let original_alt =
+                                    current_image_alt.as_deref().unwrap_or("").to_string();
+                                let placeholder = format!("__img_{n}__", n = *image_counter);
+                                *image_counter += 1;
+                                image_infos.push(ImageInfo {
+                                    placeholder: placeholder.clone(),
+                                    original_alt,
+                                    filename: filename.clone(),
+                                });
+                                let img_md = format!("![{placeholder}]({filename})");
+                                let seg = RunSegment {
+                                    text: img_md,
+                                    bold: false,
+                                    italic: false,
+                                };
                                 if in_hyperlink {
-                                    hyperlink_text.push_str(&img_md);
+                                    hyperlink_runs.push(seg);
                                 } else {
-                                    current_para_text.push_str(&img_md);
+                                    current_para_runs.push(seg);
                                 }
                             } else {
                                 warnings.push(ConversionWarning {
@@ -772,7 +862,7 @@ fn parse_document(
         format!("{}\n", markdown)
     };
 
-    (markdown, title, warnings)
+    (markdown, title, warnings, image_infos)
 }
 
 /// Check if a `w:val` attribute on an element is explicitly false ("0" or "false").
@@ -845,10 +935,13 @@ fn finalize_paragraph(
                 *title = Some(trimmed.to_string());
             }
         }
-        ParagraphKind::ListItem { ordered, level } => {
+        ParagraphKind::ListItem {
+            ordered,
+            level,
+            num_id,
+        } => {
             let counter = if *ordered {
-                // For simplicity, use a global counter per level
-                let key = ("__global__".to_string(), *level);
+                let key = (num_id.clone(), *level);
                 let c = list_counters.entry(key).or_insert(0);
                 *c += 1;
                 *c
@@ -911,13 +1004,20 @@ impl Converter for DocxConverter {
             }
         })?;
 
-        let (markdown, title, mut warnings) =
-            parse_document(&document_xml, &styles, &relationships, &numbering);
+        let mut image_counter: usize = 0;
+        let (markdown, title, mut warnings, image_infos) = parse_document(
+            &document_xml,
+            &styles,
+            &relationships,
+            &numbering,
+            &mut image_counter,
+        );
 
         // 5. Extract embedded images if requested or if describer needs them
         let need_image_bytes = options.extract_images || options.image_describer.is_some();
         let mut images: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut image_data_for_describer: Vec<(String, Vec<u8>)> = Vec::new();
+        // Map filename -> image bytes for describer lookup
+        let mut image_bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
         if need_image_bytes {
             let mut total_image_bytes: usize = 0;
             for rel in relationships.values() {
@@ -941,7 +1041,7 @@ impl Converter for DocxConverter {
                             images.push((filename.clone(), img_data.clone()));
                         }
                         if options.image_describer.is_some() {
-                            image_data_for_describer.push((filename, img_data));
+                            image_bytes_map.insert(filename, img_data);
                         }
                     } else {
                         warnings.push(ConversionWarning {
@@ -957,41 +1057,59 @@ impl Converter for DocxConverter {
             }
         }
 
-        // 6. Generate image descriptions if describer is set
+        // 6. Replace placeholders with descriptions (if describer) or original alt text
         let mut markdown = markdown;
         if let Some(ref describer) = options.image_describer {
-            for (filename, img_data) in &image_data_for_describer {
-                let mime = crate::converter::mime_from_image(filename, img_data);
-                let prompt = "Describe this image concisely for use as alt text.";
-                match describer.describe(img_data, mime, prompt) {
-                    Ok(description) => {
-                        // Replace all occurrences of ![...](filename) with ![description](filename)
-                        let pattern = format!("]({})", filename);
-                        let mut result = String::new();
-                        let mut remaining = markdown.as_str();
-                        while let Some(pos) = remaining.find(&pattern) {
-                            // Find the opening ![
-                            let before = &remaining[..pos];
-                            if let Some(bracket_pos) = before.rfind("![") {
-                                result.push_str(&remaining[..bracket_pos]);
-                                result.push_str(&format!("![{}]({})", description, filename));
-                                remaining = &remaining[pos + pattern.len()..];
-                            } else {
-                                result.push_str(&remaining[..pos + pattern.len()]);
-                                remaining = &remaining[pos + pattern.len()..];
-                            }
+            for info in &image_infos {
+                if let Some(img_data) = image_bytes_map.get(&info.filename) {
+                    let mime = crate::converter::mime_from_image(&info.filename, img_data);
+                    let prompt = "Describe this image concisely for use as alt text.";
+                    match describer.describe(img_data, mime, prompt) {
+                        Ok(description) => {
+                            markdown = crate::converter::replace_image_alt_by_placeholder(
+                                &markdown,
+                                &info.placeholder,
+                                &description,
+                                &info.filename,
+                            );
                         }
-                        result.push_str(remaining);
-                        markdown = result;
+                        Err(e) => {
+                            // Restore original alt text on failure
+                            markdown = crate::converter::replace_image_alt_by_placeholder(
+                                &markdown,
+                                &info.placeholder,
+                                &info.original_alt,
+                                &info.filename,
+                            );
+                            warnings.push(ConversionWarning {
+                                code: WarningCode::SkippedElement,
+                                message: format!(
+                                    "image description failed for '{}': {}",
+                                    info.filename, e
+                                ),
+                                location: Some(info.filename.clone()),
+                            });
+                        }
                     }
-                    Err(e) => {
-                        warnings.push(ConversionWarning {
-                            code: WarningCode::SkippedElement,
-                            message: format!("image description failed for '{}': {}", filename, e),
-                            location: Some(filename.clone()),
-                        });
-                    }
+                } else {
+                    // No image data available, restore original alt text
+                    markdown = crate::converter::replace_image_alt_by_placeholder(
+                        &markdown,
+                        &info.placeholder,
+                        &info.original_alt,
+                        &info.filename,
+                    );
                 }
+            }
+        } else {
+            // No describer: restore original alt text for all images
+            for info in &image_infos {
+                markdown = crate::converter::replace_image_alt_by_placeholder(
+                    &markdown,
+                    &info.placeholder,
+                    &info.original_alt,
+                    &info.filename,
+                );
             }
         }
 
@@ -1427,6 +1545,82 @@ mod tests {
         assert!(result.markdown.contains("text"));
     }
 
+    #[test]
+    fn test_docx_adjacent_bold_runs_merged() {
+        // Two consecutive bold runs should produce **Hello World** not **Hello** **World**
+        let body = r#"<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Hello </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>World</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("**Hello World**"),
+            "expected '**Hello World**' but markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            !result.markdown.contains("** **"),
+            "should not have separate markers"
+        );
+    }
+
+    #[test]
+    fn test_docx_adjacent_italic_runs_merged() {
+        let body = r#"<w:p><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">Hello </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>World</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("*Hello World*"),
+            "expected '*Hello World*' but markdown was: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_docx_formatting_change_between_runs() {
+        // Bold run then italic run should NOT merge
+        let body = r#"<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">bold </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>italic</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("**bold** *italic*"),
+            "expected '**bold** *italic*' but markdown was: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_docx_split_word_across_bold_runs() {
+        // Word split across two bold runs (common in spell-check/revision tracking)
+        // Should produce **Hello** not **Hel****lo**
+        let body = r#"<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Hel</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>lo</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("**Hello**"),
+            "expected '**Hello**' but markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            !result.markdown.contains("****"),
+            "should not have adjacent markers"
+        );
+    }
+
     // ---- Table tests ----
 
     #[test]
@@ -1576,6 +1770,64 @@ mod tests {
             .convert(&data, &ConversionOptions::default())
             .unwrap();
         assert!(result.markdown.contains("- **Bold item**"));
+    }
+
+    #[test]
+    fn test_docx_two_separate_ordered_lists_restart_numbering() {
+        // Two ordered lists with different numId, separated by a normal paragraph.
+        // The second list should restart numbering at 1.
+        let numbering = r#"<?xml version="1.0" encoding="UTF-8"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
+        let body = format!(
+            "{}{}{}{}{}{}{}",
+            // First ordered list (numId=1)
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Beta</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Gamma</w:t></w:r></w:p>"#,
+            // Normal paragraph separating the lists
+            para("Separator paragraph."),
+            // Second ordered list (numId=2)
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Third</w:t></w:r></w:p>"#,
+        );
+        let doc = wrap_body(&body);
+        let data = build_test_docx_with_numbering(&doc, None, None, Some(numbering));
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // First list: 1, 2, 3
+        assert!(
+            result.markdown.contains("1. Alpha"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("2. Beta"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("3. Gamma"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Second list: should restart at 1, not continue at 4
+        assert!(
+            result.markdown.contains("1. First"),
+            "expected '1. First' but markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("2. Second"),
+            "expected '2. Second' but markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("3. Third"),
+            "expected '3. Third' but markdown was: {}",
+            result.markdown
+        );
     }
 
     #[test]
@@ -1880,6 +2132,117 @@ mod tests {
         let result = converter.convert(&data, &options).unwrap();
         assert!(result.markdown.contains("![Described image](image1.png)"));
         assert!(!result.images.is_empty());
+    }
+
+    /// Helper: build a DOCX with multiple embedded image files.
+    fn build_test_docx_with_images(
+        document_xml: &str,
+        rels_xml: &str,
+        images: &[(&str, &[u8])], // (zip_path, data)
+    ) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let mut zip = ZipWriter::new(Cursor::new(buf));
+        let opts = SimpleFileOptions::default();
+
+        let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        zip.start_file("[Content_Types].xml", opts).unwrap();
+        zip.write_all(ct.as_bytes()).unwrap();
+
+        zip.start_file("_rels/.rels", opts).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+        ).unwrap();
+
+        zip.start_file("word/document.xml", opts).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+
+        zip.start_file("word/_rels/document.xml.rels", opts)
+            .unwrap();
+        zip.write_all(rels_xml.as_bytes()).unwrap();
+
+        for (path, data) in images {
+            zip.start_file(*path, opts).unwrap();
+            zip.write_all(data).unwrap();
+        }
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    /// A mock describer that returns descriptions based on the image bytes.
+    struct MockDescriberByContent;
+
+    impl ImageDescriber for MockDescriberByContent {
+        fn describe(
+            &self,
+            image_bytes: &[u8],
+            _mime_type: &str,
+            _prompt: &str,
+        ) -> Result<String, ConvertError> {
+            // Return different descriptions based on the content
+            let content = String::from_utf8_lossy(image_bytes);
+            if content.contains("cat") {
+                Ok("A photo of a cat".to_string())
+            } else if content.contains("dog") {
+                Ok("A photo of a dog".to_string())
+            } else {
+                Ok("Unknown image".to_string())
+            }
+        }
+    }
+
+    #[test]
+    fn test_docx_duplicate_image_filenames_independent_descriptions() {
+        // Two images in the same document, both referencing different relationship IDs
+        // that point to files with the SAME filename (media/image1.png) but different content.
+        // In practice DOCX files with duplicate filenames come from different relationship IDs.
+        // Here we use two different rel IDs pointing to different paths (media/img_a.png and
+        // media/img_b.png) but the filenames extracted are different. To truly test duplicate
+        // filenames, we need the same Target in two rels (which doesn't happen in practice).
+        //
+        // Instead, test the real scenario: two images with the same filename in the markdown
+        // output. We simulate this by having two rels with the same target path.
+        let body = format!(
+            "{}{}{}",
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="First image"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            para("Text between images"),
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Second image"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId3"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+        );
+        let doc = wrap_body(&body);
+        // Both rels point to the same filename
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-cat-png-data";
+        let data = build_test_docx_with_images(&doc, rels, &[("word/media/image1.png", fake_png)]);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriberByContent)),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        // Both images should have descriptions, and the text between them must be preserved
+        let md = &result.markdown;
+        assert!(
+            md.contains("![A photo of a cat](image1.png)"),
+            "expected first image described, markdown was: {}",
+            md
+        );
+        assert!(
+            md.contains("Text between images"),
+            "expected text between images preserved, markdown was: {}",
+            md
+        );
+        // Count occurrences of the described image — should be exactly 2
+        let count = md.matches("![A photo of a cat](image1.png)").count();
+        assert_eq!(
+            count, 2,
+            "expected 2 described images, found {} in: {}",
+            count, md
+        );
     }
 
     #[test]

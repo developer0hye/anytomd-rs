@@ -832,14 +832,28 @@ fn resolve_notes_path(slide_rels: &HashMap<String, Relationship>) -> Option<Stri
 
 // ---- Markdown rendering ----
 
+/// Information about an image found during rendering.
+#[derive(Debug, Clone)]
+struct ImageInfo {
+    placeholder: String,
+    original_alt: String,
+    filename: String,
+}
+
 /// Render a single slide's content as Markdown.
+///
+/// Images are emitted with unique placeholder alt text `__img_N__`.
+/// `image_counter` is incremented for each image to ensure uniqueness.
+/// Returns (markdown, image_infos).
 fn render_slide(
     number: usize,
     shapes: &[ShapeContent],
     notes: &Option<String>,
     image_filenames: &HashMap<String, String>,
-) -> String {
+    image_counter: &mut usize,
+) -> (String, Vec<ImageInfo>) {
     let mut out = String::new();
+    let mut image_infos: Vec<ImageInfo> = Vec::new();
 
     // Find the title
     let title = shapes.iter().find_map(|s| {
@@ -876,8 +890,15 @@ fn render_slide(
             }
             ShapeContent::Image { rel_id, alt_text } => {
                 if let Some(filename) = image_filenames.get(rel_id) {
-                    let alt = alt_text.as_deref().unwrap_or("");
-                    out.push_str(&format!("![{alt}]({filename})\n\n"));
+                    let original_alt = alt_text.as_deref().unwrap_or("").to_string();
+                    let placeholder = format!("__img_{n}__", n = *image_counter);
+                    *image_counter += 1;
+                    image_infos.push(ImageInfo {
+                        placeholder: placeholder.clone(),
+                        original_alt,
+                        filename: filename.clone(),
+                    });
+                    out.push_str(&format!("![{placeholder}]({filename})\n\n"));
                 }
             }
         }
@@ -896,7 +917,7 @@ fn render_slide(
     }
 
     // Trim trailing whitespace
-    out.trim_end().to_string()
+    (out.trim_end().to_string(), image_infos)
 }
 
 // ---- Converter trait impl ----
@@ -946,6 +967,7 @@ impl Converter for PptxConverter {
         let mut slide_markdowns: Vec<String> = Vec::new();
         let mut document_title: Option<String> = None;
         let mut total_image_bytes: usize = 0;
+        let mut image_counter: usize = 0;
 
         for slide_info in &slides {
             // Read slide XML
@@ -986,7 +1008,7 @@ impl Converter for PptxConverter {
             // Resolve image filenames and optionally extract image data
             let need_image_bytes = options.extract_images || options.image_describer.is_some();
             let mut image_filenames: HashMap<String, String> = HashMap::new();
-            let mut slide_image_data: Vec<(String, Vec<u8>)> = Vec::new();
+            let mut slide_image_bytes: HashMap<String, Vec<u8>> = HashMap::new();
             for shape in &shapes {
                 if let ShapeContent::Image { rel_id, .. } = shape {
                     if let Some(rel) = slide_rels.get(rel_id) {
@@ -1002,7 +1024,7 @@ impl Converter for PptxConverter {
                                         images.push((filename.to_string(), img_data.clone()));
                                     }
                                     if options.image_describer.is_some() {
-                                        slide_image_data.push((filename.to_string(), img_data));
+                                        slide_image_bytes.insert(filename.to_string(), img_data);
                                     }
                                 } else {
                                     warnings.push(ConversionWarning {
@@ -1031,43 +1053,64 @@ impl Converter for PptxConverter {
                 });
             }
 
-            let mut slide_md = render_slide(slide_info.number, &shapes, &notes, &image_filenames);
+            let (mut slide_md, slide_image_infos) = render_slide(
+                slide_info.number,
+                &shapes,
+                &notes,
+                &image_filenames,
+                &mut image_counter,
+            );
 
-            // Generate image descriptions if describer is set
+            // Replace placeholders with descriptions (if describer) or original alt text
             if let Some(ref describer) = options.image_describer {
-                for (filename, img_data) in &slide_image_data {
-                    let mime = crate::converter::mime_from_image(filename, img_data);
-                    let prompt = "Describe this image concisely for use as alt text.";
-                    match describer.describe(img_data, mime, prompt) {
-                        Ok(description) => {
-                            let pattern = format!("]({})", filename);
-                            let mut result = String::new();
-                            let mut remaining = slide_md.as_str();
-                            while let Some(pos) = remaining.find(&pattern) {
-                                let before = &remaining[..pos];
-                                if let Some(bracket_pos) = before.rfind("![") {
-                                    result.push_str(&remaining[..bracket_pos]);
-                                    result.push_str(&format!("![{}]({})", description, filename));
-                                    remaining = &remaining[pos + pattern.len()..];
-                                } else {
-                                    result.push_str(&remaining[..pos + pattern.len()]);
-                                    remaining = &remaining[pos + pattern.len()..];
-                                }
+                for info in &slide_image_infos {
+                    if let Some(img_data) = slide_image_bytes.get(&info.filename) {
+                        let mime = crate::converter::mime_from_image(&info.filename, img_data);
+                        let prompt = "Describe this image concisely for use as alt text.";
+                        match describer.describe(img_data, mime, prompt) {
+                            Ok(description) => {
+                                slide_md = crate::converter::replace_image_alt_by_placeholder(
+                                    &slide_md,
+                                    &info.placeholder,
+                                    &description,
+                                    &info.filename,
+                                );
                             }
-                            result.push_str(remaining);
-                            slide_md = result;
+                            Err(e) => {
+                                slide_md = crate::converter::replace_image_alt_by_placeholder(
+                                    &slide_md,
+                                    &info.placeholder,
+                                    &info.original_alt,
+                                    &info.filename,
+                                );
+                                warnings.push(ConversionWarning {
+                                    code: WarningCode::SkippedElement,
+                                    message: format!(
+                                        "image description failed for '{}': {}",
+                                        info.filename, e
+                                    ),
+                                    location: Some(info.filename.clone()),
+                                });
+                            }
                         }
-                        Err(e) => {
-                            warnings.push(ConversionWarning {
-                                code: WarningCode::SkippedElement,
-                                message: format!(
-                                    "image description failed for '{}': {}",
-                                    filename, e
-                                ),
-                                location: Some(filename.clone()),
-                            });
-                        }
+                    } else {
+                        slide_md = crate::converter::replace_image_alt_by_placeholder(
+                            &slide_md,
+                            &info.placeholder,
+                            &info.original_alt,
+                            &info.filename,
+                        );
                     }
+                }
+            } else {
+                // No describer: restore original alt text
+                for info in &slide_image_infos {
+                    slide_md = crate::converter::replace_image_alt_by_placeholder(
+                        &slide_md,
+                        &info.placeholder,
+                        &info.original_alt,
+                        &info.filename,
+                    );
                 }
             }
 

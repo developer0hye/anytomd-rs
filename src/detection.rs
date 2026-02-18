@@ -6,7 +6,7 @@ const PDF_MAGIC: &[u8] = b"%PDF";
 
 /// Detect the document format from a file path and optional header bytes.
 ///
-/// Priority: magic bytes → file extension.
+/// Priority: magic bytes → file extension → JSON heuristic (fallback).
 /// For ZIP-based formats (DOCX, PPTX, XLSX), the caller should use
 /// `detect_zip_format` on the full file data for accurate detection.
 pub fn detect_format(path: &Path, header_bytes: &[u8]) -> Option<&'static str> {
@@ -22,15 +22,19 @@ pub fn detect_format(path: &Path, header_bytes: &[u8]) -> Option<&'static str> {
         }
     }
 
-    // 2. JSON heuristic: starts with { or [
+    // 2. File extension
+    if let Some(fmt) = detect_by_extension(path) {
+        return Some(fmt);
+    }
+
+    // 3. JSON heuristic (fallback for unknown extensions): starts with { or [
     if let Some(&first) = header_bytes.iter().find(|b| !b.is_ascii_whitespace()) {
         if first == b'{' || first == b'[' {
             return Some("json");
         }
     }
 
-    // 3. File extension
-    detect_by_extension(path)
+    None
 }
 
 /// Detect the specific format of a ZIP-based file by inspecting its internal paths.
@@ -189,6 +193,27 @@ mod tests {
         let path = PathBuf::from("data.bin");
         let json_bytes = b"[1, 2, 3]";
         assert_eq!(detect_format(&path, json_bytes), Some("json"));
+    }
+
+    #[test]
+    fn test_detect_format_txt_starting_with_brace_returns_txt() {
+        let path = PathBuf::from("notes.txt");
+        let content = b"{ this is just a text file }";
+        assert_eq!(detect_format(&path, content), Some("txt"));
+    }
+
+    #[test]
+    fn test_detect_format_csv_starting_with_bracket_returns_csv() {
+        let path = PathBuf::from("data.csv");
+        let content = b"[header1],header2\nval1,val2";
+        assert_eq!(detect_format(&path, content), Some("csv"));
+    }
+
+    #[test]
+    fn test_detect_format_unknown_ext_with_json_content_returns_json() {
+        let path = PathBuf::from("data.dat");
+        let content = b"{ \"key\": \"value\" }";
+        assert_eq!(detect_format(&path, content), Some("json"));
     }
 
     #[test]
