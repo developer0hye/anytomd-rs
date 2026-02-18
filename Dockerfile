@@ -6,7 +6,7 @@
 # Provides a reproducible Linux build/test environment.
 # Usage: see docker-compose.yml or the "Docker Development" section in CLAUDE.md.
 
-ARG RUST_VERSION=1.83.0
+ARG RUST_VERSION=1.90.0
 
 # ------------------------------------------------------------
 # Stage 1: chef — install cargo-chef for dependency caching

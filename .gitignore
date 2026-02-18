@@ -22,3 +22,6 @@ target
 
 # Reference repos (for development analysis only)
 reference/
+
+# macOS
+.DS_Store
