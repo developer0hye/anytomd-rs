@@ -185,6 +185,8 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 
 **Run after every code change in `src/` or `tests/`** (optional for doc-only `*.md` changes):
 
+- For every feature update, review `README.md` and update it in the same PR. Analyze what must be modified, added, or removed so README stays aligned with the current behavior.
+
 ```bash
 cargo build && cargo test && cargo clippy -- -D warnings
 ```
