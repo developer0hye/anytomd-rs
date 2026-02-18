@@ -1,4 +1,4 @@
-//! Integration tests for the ImageDescriber trait and its effect on DOCX/PPTX conversion.
+//! Integration tests for the ImageDescriber trait and its effect on DOCX/PPTX/XLSX/standalone image conversion.
 
 use std::io::{Cursor, Write};
 use std::sync::Arc;
@@ -280,6 +280,72 @@ fn test_xlsx_without_describer_has_empty_alt() {
     let result = anytomd::convert_bytes(&data, "xlsx", &options).unwrap();
     assert!(
         result.markdown.contains("![](image1.png)"),
+        "markdown was: {}",
+        result.markdown
+    );
+}
+
+// ---- Standalone image file integration tests ----
+
+/// Minimal PNG file header for standalone image tests.
+const PNG_HEADER: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+#[test]
+fn test_image_file_with_mock_describer() {
+    let options = ConversionOptions {
+        image_describer: Some(Arc::new(MockDescriber {
+            description: "A photo of a cat sitting on a windowsill".to_string(),
+        })),
+        ..Default::default()
+    };
+    let result = anytomd::convert_bytes(&PNG_HEADER, "png", &options).unwrap();
+    assert_eq!(
+        result.markdown, "![A photo of a cat sitting on a windowsill](image.png)\n",
+        "markdown was: {}",
+        result.markdown
+    );
+}
+
+#[test]
+fn test_image_file_without_describer() {
+    let result = anytomd::convert_bytes(&PNG_HEADER, "png", &ConversionOptions::default()).unwrap();
+    assert_eq!(
+        result.markdown, "![](image.png)\n",
+        "markdown was: {}",
+        result.markdown
+    );
+}
+
+#[test]
+fn test_image_file_with_extract_images() {
+    let options = ConversionOptions {
+        extract_images: true,
+        ..Default::default()
+    };
+    let result = anytomd::convert_bytes(&PNG_HEADER, "png", &options).unwrap();
+    assert_eq!(result.images.len(), 1);
+    assert_eq!(result.images[0].0, "image.png");
+    assert_eq!(result.images[0].1, PNG_HEADER.to_vec());
+}
+
+#[test]
+fn test_image_file_via_image_extension() {
+    // The "image" generic extension (from detection.rs) should also work
+    let result =
+        anytomd::convert_bytes(&PNG_HEADER, "image", &ConversionOptions::default()).unwrap();
+    assert_eq!(
+        result.markdown, "![](image.png)\n",
+        "markdown was: {}",
+        result.markdown
+    );
+}
+
+#[test]
+fn test_image_file_jpeg_via_convert_bytes() {
+    let jpeg_data: [u8; 8] = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46];
+    let result = anytomd::convert_bytes(&jpeg_data, "jpg", &ConversionOptions::default()).unwrap();
+    assert_eq!(
+        result.markdown, "![](image.jpg)\n",
         "markdown was: {}",
         result.markdown
     );
