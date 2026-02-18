@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
+use chrono::{Datelike, Timelike};
 
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -10,12 +11,31 @@ use crate::markdown::{build_table, format_heading};
 
 pub struct XlsxConverter;
 
+/// Convert a 0-based column index to an Excel-style column letter (A, B, ..., Z, AA, ...).
+fn col_letter(col: usize) -> String {
+    let mut result = String::new();
+    let mut n = col;
+    loop {
+        result.insert(0, (b'A' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    result
+}
+
 /// Format a calamine cell value as a string for Markdown output.
 ///
 /// Whole-number floats display as integers (e.g. `3.0` → `"3"`).
 /// Booleans display as `TRUE` / `FALSE`.
-/// Errors and empty cells produce an empty string.
-fn format_cell(cell: &Data) -> String {
+/// Empty cells produce an empty string.
+/// Error cells display the error text (e.g. `#DIV/0!`) and emit a warning.
+/// DateTime cells are formatted as `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`.
+///
+/// Note: calamine returns computed values for formula cells, not the formula text.
+/// This means formulas like `=SUM(A1:A3)` appear as their computed numeric result.
+fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning>) -> String {
     match cell {
         Data::Empty => String::new(),
         Data::String(s) => s.clone(),
@@ -34,10 +54,39 @@ fn format_cell(cell: &Data) -> String {
                 "FALSE".to_string()
             }
         }
-        Data::DateTime(dt) => format!("{dt}"),
+        Data::DateTime(dt) => {
+            if let Some(ndt) = dt.as_datetime() {
+                let (h, m, s) = (ndt.hour(), ndt.minute(), ndt.second());
+                if h == 0 && m == 0 && s == 0 {
+                    // Date-only: no time component
+                    format!("{:04}-{:02}-{:02}", ndt.year(), ndt.month(), ndt.day())
+                } else {
+                    format!(
+                        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                        ndt.year(),
+                        ndt.month(),
+                        ndt.day(),
+                        h,
+                        m,
+                        s
+                    )
+                }
+            } else {
+                // Fallback: use Display impl
+                format!("{dt}")
+            }
+        }
         Data::DateTimeIso(s) => s.clone(),
         Data::DurationIso(s) => s.clone(),
-        Data::Error(_) => String::new(),
+        Data::Error(e) => {
+            let error_text = format!("{e}");
+            warnings.push(ConversionWarning {
+                code: WarningCode::MalformedSegment,
+                message: format!("cell contains error: {error_text}"),
+                location: Some(location.to_string()),
+            });
+            error_text
+        }
     }
 }
 
@@ -81,12 +130,26 @@ impl Converter for XlsxConverter {
                 None => continue,
             };
 
-            let headers: Vec<String> = header_row.iter().map(format_cell).collect();
+            let headers: Vec<String> = header_row
+                .iter()
+                .enumerate()
+                .map(|(ci, cell)| {
+                    let loc = format!("{}!{}1", name, col_letter(ci));
+                    format_cell(cell, &loc, &mut warnings)
+                })
+                .collect();
             let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
 
             let mut data_rows: Vec<Vec<String>> = Vec::new();
-            for row in rows_iter {
-                let cells: Vec<String> = row.iter().map(format_cell).collect();
+            for (ri, row) in rows_iter.enumerate() {
+                let cells: Vec<String> = row
+                    .iter()
+                    .enumerate()
+                    .map(|(ci, cell)| {
+                        let loc = format!("{}!{}{}", name, col_letter(ci), ri + 2);
+                        format_cell(cell, &loc, &mut warnings)
+                    })
+                    .collect();
                 data_rows.push(cells);
             }
 
@@ -124,8 +187,8 @@ mod tests {
         Empty,
     }
 
-    /// Convert a 0-based column index to an Excel column letter (A-Z).
-    fn col_letter(col: usize) -> char {
+    /// Convert a 0-based column index to an Excel column letter (A-Z) for test XML.
+    fn test_col_letter(col: usize) -> char {
         (b'A' + col as u8) as char
     }
 
@@ -216,7 +279,7 @@ mod tests {
             for (ri, row) in rows.iter().enumerate() {
                 ws.push_str(&format!("<row r=\"{}\">", ri + 1));
                 for (ci, cell) in row.iter().enumerate() {
-                    let col = col_letter(ci);
+                    let col = test_col_letter(ci);
                     let r = ri + 1;
                     match cell {
                         TestCell::Str(s) => {
@@ -470,5 +533,126 @@ mod tests {
         let converter = XlsxConverter;
         let result = converter.convert(b"not a valid xlsx file", &ConversionOptions::default());
         assert!(result.is_err());
+    }
+
+    // -- col_letter tests --
+
+    #[test]
+    fn test_col_letter_single() {
+        assert_eq!(col_letter(0), "A");
+        assert_eq!(col_letter(1), "B");
+        assert_eq!(col_letter(25), "Z");
+    }
+
+    #[test]
+    fn test_col_letter_multi() {
+        assert_eq!(col_letter(26), "AA");
+        assert_eq!(col_letter(27), "AB");
+        assert_eq!(col_letter(51), "AZ");
+        assert_eq!(col_letter(52), "BA");
+        assert_eq!(col_letter(701), "ZZ");
+        assert_eq!(col_letter(702), "AAA");
+    }
+
+    // -- Error cell tests --
+
+    #[test]
+    fn test_xlsx_format_cell_error_displays_text() {
+        let mut warnings = Vec::new();
+        let cell = Data::Error(calamine::CellErrorType::Div0);
+        let result = format_cell(&cell, "Sheet1!A1", &mut warnings);
+        assert!(
+            result.contains("DIV"),
+            "expected error text containing 'DIV', got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_xlsx_format_cell_error_na() {
+        let mut warnings = Vec::new();
+        let cell = Data::Error(calamine::CellErrorType::NA);
+        let result = format_cell(&cell, "Sheet1!B2", &mut warnings);
+        assert!(
+            result.contains("N/A"),
+            "expected error text containing 'N/A', got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_xlsx_format_cell_error_emits_warning() {
+        let mut warnings = Vec::new();
+        let cell = Data::Error(calamine::CellErrorType::Div0);
+        format_cell(&cell, "Sheet1!C3", &mut warnings);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, WarningCode::MalformedSegment);
+        assert_eq!(warnings[0].location.as_deref(), Some("Sheet1!C3"));
+        assert!(warnings[0].message.contains("error"));
+    }
+
+    // -- DateTime formatting tests --
+
+    #[test]
+    fn test_xlsx_format_cell_datetime_date_only() {
+        use calamine::ExcelDateTimeType;
+        let mut warnings = Vec::new();
+        // Excel serial date for 2024-01-15 = 45306
+        let dt = Data::DateTime(calamine::ExcelDateTime::new(
+            45306.0,
+            ExcelDateTimeType::DateTime,
+            false,
+        ));
+        let result = format_cell(&dt, "Sheet1!A1", &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(result, "2024-01-15");
+    }
+
+    #[test]
+    fn test_xlsx_format_cell_datetime_full() {
+        use calamine::ExcelDateTimeType;
+        let mut warnings = Vec::new();
+        // 45306.5 = 2024-01-15 12:00:00
+        let dt = Data::DateTime(calamine::ExcelDateTime::new(
+            45306.5,
+            ExcelDateTimeType::DateTime,
+            false,
+        ));
+        let result = format_cell(&dt, "Sheet1!A1", &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(result, "2024-01-15 12:00:00");
+    }
+
+    #[test]
+    fn test_xlsx_format_cell_datetime_with_time() {
+        use calamine::ExcelDateTimeType;
+        let mut warnings = Vec::new();
+        // 45306.0 + 14h30m15s = 45306 + (14*3600+30*60+15)/86400
+        let fractional = (14.0 * 3600.0 + 30.0 * 60.0 + 15.0) / 86400.0;
+        let dt = Data::DateTime(calamine::ExcelDateTime::new(
+            45306.0 + fractional,
+            ExcelDateTimeType::DateTime,
+            false,
+        ));
+        let result = format_cell(&dt, "Sheet1!A1", &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(result, "2024-01-15 14:30:15");
+    }
+
+    #[test]
+    fn test_xlsx_format_cell_datetime_time_only() {
+        use calamine::ExcelDateTimeType;
+        let mut warnings = Vec::new();
+        // Time-only: fractional day < 1.0, e.g. 0.5 = 12:00:00
+        let dt = Data::DateTime(calamine::ExcelDateTime::new(
+            0.5,
+            ExcelDateTimeType::TimeDelta,
+            false,
+        ));
+        let result = format_cell(&dt, "Sheet1!A1", &mut warnings);
+        assert!(warnings.is_empty());
+        // Could be either "1899-12-30 12:00:00" or "12:00:00" depending on calamine behavior
+        assert!(
+            result.contains("12:00:00"),
+            "expected time 12:00:00 in output, got: {result}"
+        );
     }
 }
