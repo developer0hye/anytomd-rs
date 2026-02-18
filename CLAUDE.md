@@ -83,8 +83,8 @@ This applies to:
 ## Branching & PR Workflow
 
 - Always create a new branch before starting any task (never work directly on `main`)
-- **MUST (for PR-bound code changes):** create a worktree first, then create/edit files inside that worktree directory
-- **SHOULD:** avoid leaving code changes in the main repo directory; this prevents untracked-file drift and post-merge pull issues
+- **All changes — including documentation-only edits (`*.md`) — MUST go through a PR.** Never commit directly to `main`.
+- **MUST:** create a worktree first, then create/edit files inside that worktree directory
 - Branch naming convention: `<type>/<short-description>` (e.g., `feat/add-docx-converter`, `fix/table-parsing-bug`, `ci/add-linting`)
 - Once the task is complete, push the branch and create a Pull Request to `main`
 - Each branch should contain a single, focused unit of work
