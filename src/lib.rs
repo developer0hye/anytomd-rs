@@ -45,10 +45,12 @@ pub fn convert_bytes(
     use converter::docx::DocxConverter;
     use converter::json_conv::JsonConverter;
     use converter::plain_text::PlainTextConverter;
+    use converter::pptx::PptxConverter;
     use converter::xlsx::XlsxConverter;
 
     let converters: Vec<Box<dyn Converter>> = vec![
         Box::new(DocxConverter),
+        Box::new(PptxConverter),
         Box::new(XlsxConverter),
         Box::new(JsonConverter),
         Box::new(CsvConverter),
