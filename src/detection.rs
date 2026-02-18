@@ -74,6 +74,8 @@ fn detect_by_extension(path: &Path) -> Option<&'static str> {
         "xml" => Some("xml"),
         "txt" | "text" | "log" | "md" | "markdown" | "rst" | "ini" | "cfg" | "conf" | "toml"
         | "yaml" | "yml" => Some("txt"),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "svg" | "heic"
+        | "heif" | "avif" => Some("image"),
         _ => None,
     }
 }
@@ -187,5 +189,45 @@ mod tests {
         let path = PathBuf::from("data.bin");
         let json_bytes = b"[1, 2, 3]";
         assert_eq!(detect_format(&path, json_bytes), Some("json"));
+    }
+
+    #[test]
+    fn test_detect_format_png_by_extension() {
+        let path = PathBuf::from("photo.png");
+        assert_eq!(detect_format(&path, &[]), Some("image"));
+    }
+
+    #[test]
+    fn test_detect_format_jpg_by_extension() {
+        let path = PathBuf::from("photo.jpg");
+        assert_eq!(detect_format(&path, &[]), Some("image"));
+    }
+
+    #[test]
+    fn test_detect_format_jpeg_by_extension() {
+        let path = PathBuf::from("photo.jpeg");
+        assert_eq!(detect_format(&path, &[]), Some("image"));
+    }
+
+    #[test]
+    fn test_detect_format_svg_by_extension() {
+        let path = PathBuf::from("icon.svg");
+        assert_eq!(detect_format(&path, &[]), Some("image"));
+    }
+
+    #[test]
+    fn test_detect_format_image_variants() {
+        for ext in &[
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "heic", "heif",
+            "avif",
+        ] {
+            let path = PathBuf::from(format!("file.{}", ext));
+            assert_eq!(
+                detect_format(&path, &[]),
+                Some("image"),
+                "expected 'image' for .{}",
+                ext
+            );
+        }
     }
 }

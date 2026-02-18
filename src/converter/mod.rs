@@ -3,6 +3,7 @@ pub mod docx;
 #[cfg(feature = "gemini")]
 pub mod gemini;
 pub mod html;
+pub mod image;
 pub mod json_conv;
 pub mod plain_text;
 pub mod pptx;
@@ -196,6 +197,8 @@ pub(crate) fn mime_from_image(filename: &str, data: &[u8]) -> &'static str {
         "bmp" => "image/bmp",
         "tiff" | "tif" => "image/tiff",
         "svg" => "image/svg+xml",
+        "heic" | "heif" => "image/heic",
+        "avif" => "image/avif",
         _ => "application/octet-stream",
     }
 }
@@ -314,6 +317,9 @@ mod tests {
         assert_eq!(mime_from_image("file.bmp", empty), "image/bmp");
         assert_eq!(mime_from_image("file.tiff", empty), "image/tiff");
         assert_eq!(mime_from_image("file.svg", empty), "image/svg+xml");
+        assert_eq!(mime_from_image("file.heic", empty), "image/heic");
+        assert_eq!(mime_from_image("file.heif", empty), "image/heic");
+        assert_eq!(mime_from_image("file.avif", empty), "image/avif");
         assert_eq!(
             mime_from_image("file.xyz", empty),
             "application/octet-stream"

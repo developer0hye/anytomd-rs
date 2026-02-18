@@ -64,6 +64,7 @@ pub fn convert_bytes(
     use converter::csv_conv::CsvConverter;
     use converter::docx::DocxConverter;
     use converter::html::HtmlConverter;
+    use converter::image::ImageConverter;
     use converter::json_conv::JsonConverter;
     use converter::plain_text::PlainTextConverter;
     use converter::pptx::PptxConverter;
@@ -78,6 +79,7 @@ pub fn convert_bytes(
         Box::new(XmlConverter),
         Box::new(CsvConverter),
         Box::new(HtmlConverter),
+        Box::new(ImageConverter),
         Box::new(PlainTextConverter),
     ];
 
