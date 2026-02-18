@@ -367,7 +367,7 @@ pub struct ConversionOptions {
 
 When building the built-in / example `ImageDescriber` implementation:
 - Use **Google Gemini** as the LLM provider
-- Default model: **`gemini-2.0-flash`**
+- Default model: **`gemini-3-flash-preview`**
 - Always refer to the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs) for the latest API specs, authentication methods, and model availability before implementing or updating Gemini-related code
 
 ---
