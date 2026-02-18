@@ -70,6 +70,27 @@ anytomd-rs supports optional LLM-based image description via the `ImageDescriber
 - The `ImageDescriber` trait is provider-agnostic: Gemini is the default, but any LLM backend can be used
 - **API key management:** The `ImageDescriber` trait has no key concept. The built-in `GeminiDescriber` accepts a key via struct field (`new(api_key)`) and also provides an env-var fallback (`from_env()` reads `GEMINI_API_KEY`). Never hardcode, log, or persist API keys in library code.
 
+### CI Gemini Integration Testing
+
+CI runs real Gemini API calls to verify end-to-end image description. To minimize cost, CI uses a cheaper model than production.
+
+| Context | Model | Rationale |
+|---------|-------|-----------|
+| Production / library default | `gemini-3-flash-preview` | Best quality for real-world usage |
+| CI integration tests | `gemini-2.5-flash-lite` | Cheapest model; sufficient for verifying API integration works |
+
+**How it works:**
+- The `GEMINI_API_KEY` secret is stored as a **GitHub Actions repository secret**
+- CI Gemini tests are **conditionally executed** — they only run when the `GEMINI_API_KEY` secret is available. PRs from forks (which cannot access secrets) skip these tests gracefully.
+- Tests use `GeminiDescriber::with_model(api_key, "gemini-2.5-flash-lite")` to override the default model
+- CI tests verify that the API returns a non-empty description without errors — they do NOT assert on the content of the description (LLM output is non-deterministic)
+
+**Rules:**
+- **Never hardcode API keys** in CI workflow files, test code, or any committed file
+- CI Gemini tests must be **additive** — all existing tests (unit + integration with mock describers) must continue to pass without the `GEMINI_API_KEY` secret
+- If a CI Gemini test fails due to API rate limits or transient errors, it should NOT block the overall CI pipeline — mark these tests as allowed-to-fail or use retry logic
+- When adding new CI Gemini tests, always test with `gemini-2.5-flash-lite` — never use the production model in CI
+
 ---
 
 ## Language Rules
@@ -385,6 +406,15 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - cargo build --release      # Release build must succeed
 ```
 
+**Gemini feature CI checks (conditional):**
+```yaml
+# These steps run ONLY when the GEMINI_API_KEY secret is available.
+# They use gemini-2.5-flash-lite to minimize cost.
+- cargo test --features gemini                      # All tests with gemini feature
+- cargo clippy --features gemini -- -D warnings     # Lint with gemini feature
+- cargo test --features gemini --test test_gemini_live  # Live API integration test (allowed-to-fail)
+```
+
 **CI matrix:** Run on all three target platforms:
 - `ubuntu-latest`
 - `macos-latest`
@@ -394,3 +424,4 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) **MUST be set up** and ke
 - Never merge code that breaks CI
 - If a new converter is added without tests, CI should be considered incomplete — add tests before merging
 - CI must use a stable Rust toolchain compatible with `rust-version` in `Cargo.toml`
+- Gemini live API tests are **optional** — they should not block merging if they fail due to transient API issues. All other CI steps (fmt, clippy, unit tests, mock-based integration tests) remain mandatory.
