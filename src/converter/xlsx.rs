@@ -43,7 +43,7 @@ fn format_cell(cell: &Data) -> String {
 
 impl Converter for XlsxConverter {
     fn supported_extensions(&self) -> &[&str] {
-        &["xlsx"]
+        &["xlsx", "xls"]
     }
 
     fn convert(
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn test_xlsx_supported_extensions() {
         let converter = XlsxConverter;
-        assert_eq!(converter.supported_extensions(), &["xlsx"]);
+        assert_eq!(converter.supported_extensions(), &["xlsx", "xls"]);
     }
 
     #[test]
@@ -265,6 +265,21 @@ mod tests {
         assert!(converter.can_convert("xlsx", &[]));
         assert!(!converter.can_convert("csv", &[]));
         assert!(!converter.can_convert("json", &[]));
+    }
+
+    #[test]
+    fn test_xls_supported_extension() {
+        let converter = XlsxConverter;
+        assert!(converter.can_convert("xls", &[]));
+    }
+
+    #[test]
+    fn test_xls_not_confused_with_other_formats() {
+        let converter = XlsxConverter;
+        assert!(!converter.can_convert("csv", &[]));
+        assert!(!converter.can_convert("json", &[]));
+        assert!(!converter.can_convert("docx", &[]));
+        assert!(!converter.can_convert("pptx", &[]));
     }
 
     #[test]
