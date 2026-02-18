@@ -46,6 +46,14 @@ fn read_zip_bytes(
     Ok(Some(buf))
 }
 
+/// Information about an image found during conversion.
+#[derive(Debug, Clone)]
+struct ImageInfo {
+    placeholder: String,
+    original_alt: String,
+    filename: String,
+}
+
 /// Parse a `.rels` XML file, returning a map of relationship Id → Target.
 fn parse_rels(xml: &str) -> HashMap<String, String> {
     let mut rels = HashMap::new();
@@ -417,7 +425,9 @@ impl Converter for XlsxConverter {
         // Extract embedded images if requested or if describer needs them
         let need_image_bytes = options.extract_images || options.image_describer.is_some();
         let mut images: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut image_data_for_describer: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut image_bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut image_infos: Vec<ImageInfo> = Vec::new();
+        let mut image_counter: usize = 0;
 
         if need_image_bytes {
             // Open a fresh ZipArchive (calamine consumed the original cursor)
@@ -431,12 +441,19 @@ impl Converter for XlsxConverter {
                 for (filename, img_data) in sheet_images {
                     total_image_bytes += img_data.len();
                     if total_image_bytes <= options.max_total_image_bytes {
-                        image_lines.push(format!("![]({})", filename));
+                        let placeholder = format!("__img_{n}__", n = image_counter);
+                        image_counter += 1;
+                        image_infos.push(ImageInfo {
+                            placeholder: placeholder.clone(),
+                            original_alt: String::new(),
+                            filename: filename.clone(),
+                        });
+                        image_lines.push(format!("![{placeholder}]({filename})"));
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
                         }
                         if options.image_describer.is_some() {
-                            image_data_for_describer.push((filename, img_data));
+                            image_bytes_map.insert(filename, img_data);
                         }
                     } else {
                         warnings.push(ConversionWarning {
@@ -456,39 +473,58 @@ impl Converter for XlsxConverter {
             }
         }
 
-        // Generate image descriptions if describer is set
+        // Replace placeholders with descriptions (if describer) or original alt text
         let mut markdown = sections.join("\n");
         if let Some(ref describer) = options.image_describer {
-            for (filename, img_data) in &image_data_for_describer {
-                let mime = crate::converter::mime_from_image(filename, img_data);
-                let prompt = "Describe this image concisely for use as alt text.";
-                match describer.describe(img_data, mime, prompt) {
-                    Ok(description) => {
-                        let pattern = format!("]({})", filename);
-                        let mut result = String::new();
-                        let mut remaining = markdown.as_str();
-                        while let Some(pos) = remaining.find(&pattern) {
-                            let before = &remaining[..pos];
-                            if let Some(bracket_pos) = before.rfind("![") {
-                                result.push_str(&remaining[..bracket_pos]);
-                                result.push_str(&format!("![{}]({})", description, filename));
-                                remaining = &remaining[pos + pattern.len()..];
-                            } else {
-                                result.push_str(&remaining[..pos + pattern.len()]);
-                                remaining = &remaining[pos + pattern.len()..];
-                            }
+            for info in &image_infos {
+                if let Some(img_data) = image_bytes_map.get(&info.filename) {
+                    let mime = crate::converter::mime_from_image(&info.filename, img_data);
+                    let prompt = "Describe this image concisely for use as alt text.";
+                    match describer.describe(img_data, mime, prompt) {
+                        Ok(description) => {
+                            markdown = crate::converter::replace_image_alt_by_placeholder(
+                                &markdown,
+                                &info.placeholder,
+                                &description,
+                                &info.filename,
+                            );
                         }
-                        result.push_str(remaining);
-                        markdown = result;
+                        Err(e) => {
+                            // Restore original (empty) alt text on failure
+                            markdown = crate::converter::replace_image_alt_by_placeholder(
+                                &markdown,
+                                &info.placeholder,
+                                &info.original_alt,
+                                &info.filename,
+                            );
+                            warnings.push(ConversionWarning {
+                                code: WarningCode::SkippedElement,
+                                message: format!(
+                                    "image description failed for '{}': {}",
+                                    info.filename, e
+                                ),
+                                location: Some(info.filename.clone()),
+                            });
+                        }
                     }
-                    Err(e) => {
-                        warnings.push(ConversionWarning {
-                            code: WarningCode::SkippedElement,
-                            message: format!("image description failed for '{}': {}", filename, e),
-                            location: Some(filename.clone()),
-                        });
-                    }
+                } else {
+                    markdown = crate::converter::replace_image_alt_by_placeholder(
+                        &markdown,
+                        &info.placeholder,
+                        &info.original_alt,
+                        &info.filename,
+                    );
                 }
+            }
+        } else {
+            // No describer: restore original alt text
+            for info in &image_infos {
+                markdown = crate::converter::replace_image_alt_by_placeholder(
+                    &markdown,
+                    &info.placeholder,
+                    &info.original_alt,
+                    &info.filename,
+                );
             }
         }
 
