@@ -259,6 +259,8 @@ docker compose build --no-cache
 - Every dependency MUST be pure Rust (no C bindings)
 - Minimize dependency count — do not add a crate for something achievable in <50 lines
 - **Before adding or upgrading any external crate**, check its latest stable version on [crates.io](https://crates.io/) (e.g., via `cargo search <crate>` or web search) and use that version. Do not blindly copy version numbers from old examples or memory — always verify the current latest stable release at the time of use.
+- **Version fallback strategy:** If the latest stable version causes build or test failures (e.g., MSRV incompatibility, breaking API changes, dependency conflicts), downgrade to the previous minor or patch version and retry. When using a non-latest version, add a comment above the dependency in `Cargo.toml` explaining the reason and the blocked version (e.g., `# pinned: foo 3.x requires MSRV 1.80, tracking https://...`).
+- **Dependency freshness:** When touching a converter or module that uses an external crate, check whether a newer stable version is available. If so, attempt the upgrade as part of the work. This keeps dependencies from going stale over time — upgrades should happen opportunistically, not only when something breaks.
 
 ### Testing — TDD Required
 
