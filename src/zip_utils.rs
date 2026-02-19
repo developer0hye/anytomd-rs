@@ -1,4 +1,4 @@
-use std::io::{Read, Seek};
+use std::io::{Cursor, Read, Seek};
 
 use zip::ZipArchive;
 
@@ -25,4 +25,34 @@ pub(crate) fn validate_zip_budget<R: Read + Seek>(
         });
     }
     Ok(())
+}
+
+/// Read a UTF-8 text file from a ZIP archive, returning None if not found.
+pub(crate) fn read_zip_text(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<Option<String>, ConvertError> {
+    let mut file = match archive.by_name(path) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(ConvertError::ZipError(e)),
+    };
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(Some(buf))
+}
+
+/// Read raw bytes from a ZIP archive, returning None if not found.
+pub(crate) fn read_zip_bytes(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<Option<Vec<u8>>, ConvertError> {
+    let mut file = match archive.by_name(path) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(ConvertError::ZipError(e)),
+    };
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(Some(buf))
 }

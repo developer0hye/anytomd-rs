@@ -4,6 +4,7 @@ pub mod gemini;
 pub mod html;
 pub mod image;
 pub mod json_conv;
+pub(crate) mod ooxml_utils;
 pub mod plain_text;
 pub mod pptx;
 pub mod xlsx;

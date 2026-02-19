@@ -1,15 +1,19 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use zip::ZipArchive;
 
+use crate::converter::ooxml_utils::{
+    parse_relationships, resolve_image_placeholders, ImageInfo, Relationship,
+};
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
 };
 use crate::error::ConvertError;
 use crate::markdown::{build_table, format_heading, format_list_item, wrap_formatting};
+use crate::zip_utils::{read_zip_bytes, read_zip_text};
 
 pub struct DocxConverter;
 
@@ -27,49 +31,10 @@ enum ParagraphKind {
     }, // list item from numbering
 }
 
-/// A resolved relationship entry from document.xml.rels.
-#[derive(Debug, Clone)]
-struct Relationship {
-    target: String,
-    rel_type: String,
-}
-
 /// A numbering level definition from numbering.xml.
 #[derive(Debug, Clone)]
 struct NumberingLevel {
     ordered: bool,
-}
-
-// ---- ZIP helpers ----
-
-/// Read a UTF-8 text file from a ZIP archive, returning None if not found.
-fn read_zip_text(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<String>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
-    Ok(Some(buf))
-}
-
-/// Read raw bytes from a ZIP archive, returning None if not found.
-fn read_zip_bytes(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<Vec<u8>>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(Some(buf))
 }
 
 // ---- Styles parsing ----
@@ -160,49 +125,6 @@ fn extract_heading_level_from_name(name: &str) -> Option<u8> {
     } else {
         None
     }
-}
-
-// ---- Relationships parsing ----
-
-/// Parse document.xml.rels to extract a mapping from relationship ID to Relationship.
-fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
-    let mut rels = HashMap::new();
-    let mut reader = Reader::from_str(xml);
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = e.local_name();
-                let local_str = std::str::from_utf8(local.as_ref()).unwrap_or("");
-
-                if local_str == "Relationship" {
-                    let mut id = None;
-                    let mut target = None;
-                    let mut rel_type = String::new();
-
-                    for attr in e.attributes().flatten() {
-                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-                        let val = String::from_utf8_lossy(&attr.value).to_string();
-                        match key {
-                            "Id" => id = Some(val),
-                            "Target" => target = Some(val),
-                            "Type" => rel_type = val,
-                            _ => {}
-                        }
-                    }
-
-                    if let (Some(id), Some(target)) = (id, target) {
-                        rels.insert(id, Relationship { target, rel_type });
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
-        }
-    }
-
-    rels
 }
 
 // ---- Numbering parsing ----
@@ -379,14 +301,6 @@ fn merge_and_format_runs(runs: &[RunSegment]) -> String {
 }
 
 // ---- Document body parsing ----
-
-/// Information about an image found during parsing.
-#[derive(Debug, Clone)]
-struct ImageInfo {
-    placeholder: String,
-    original_alt: String,
-    filename: String,
-}
 
 /// Parse the main document.xml body and produce Markdown output.
 ///
@@ -1059,59 +973,13 @@ impl Converter for DocxConverter {
 
         // 6. Replace placeholders with descriptions (if describer) or original alt text
         let mut markdown = markdown;
-        if let Some(ref describer) = options.image_describer {
-            for info in &image_infos {
-                if let Some(img_data) = image_bytes_map.get(&info.filename) {
-                    let mime = crate::converter::mime_from_image(&info.filename, img_data);
-                    let prompt = "Describe this image concisely for use as alt text.";
-                    match describer.describe(img_data, mime, prompt) {
-                        Ok(description) => {
-                            markdown = crate::converter::replace_image_alt_by_placeholder(
-                                &markdown,
-                                &info.placeholder,
-                                &description,
-                                &info.filename,
-                            );
-                        }
-                        Err(e) => {
-                            // Restore original alt text on failure
-                            markdown = crate::converter::replace_image_alt_by_placeholder(
-                                &markdown,
-                                &info.placeholder,
-                                &info.original_alt,
-                                &info.filename,
-                            );
-                            warnings.push(ConversionWarning {
-                                code: WarningCode::SkippedElement,
-                                message: format!(
-                                    "image description failed for '{}': {}",
-                                    info.filename, e
-                                ),
-                                location: Some(info.filename.clone()),
-                            });
-                        }
-                    }
-                } else {
-                    // No image data available, restore original alt text
-                    markdown = crate::converter::replace_image_alt_by_placeholder(
-                        &markdown,
-                        &info.placeholder,
-                        &info.original_alt,
-                        &info.filename,
-                    );
-                }
-            }
-        } else {
-            // No describer: restore original alt text for all images
-            for info in &image_infos {
-                markdown = crate::converter::replace_image_alt_by_placeholder(
-                    &markdown,
-                    &info.placeholder,
-                    &info.original_alt,
-                    &info.filename,
-                );
-            }
-        }
+        resolve_image_placeholders(
+            &mut markdown,
+            &image_infos,
+            &image_bytes_map,
+            options.image_describer.as_deref(),
+            &mut warnings,
+        );
 
         Ok(ConversionResult {
             markdown,
