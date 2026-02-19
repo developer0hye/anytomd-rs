@@ -43,3 +43,6 @@ jobs:
 
       - name: Build release
         run: cargo build --release
+
+      - name: CLI smoke test
+        run: echo "hello" | cargo run -- --format txt
