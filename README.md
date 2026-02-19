@@ -1,6 +1,6 @@
 # anytomd
 
-A pure Rust library that converts various document formats into Markdown — designed for LLM consumption.
+A pure Rust tool and library that converts various document formats into Markdown — designed for LLM consumption.
 
 [![CI](https://github.com/developer0hye/anytomd-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/developer0hye/anytomd-rs/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/anytomd.svg)](https://crates.io/crates/anytomd)
@@ -43,7 +43,45 @@ To enable the built-in Gemini image describer:
 cargo add anytomd --features gemini
 ```
 
-## Quick Start
+## CLI
+
+### Install
+
+```sh
+cargo install anytomd
+```
+
+### Usage
+
+```sh
+# Convert a single file
+anytomd document.docx > output.md
+
+# Convert multiple files (separated by <!-- source: path --> comments)
+anytomd report.docx data.csv slides.pptx > combined.md
+
+# Write output to a file
+anytomd document.docx -o output.md
+
+# Read from stdin (--format is required)
+cat data.csv | anytomd --format csv
+
+# Override format detection
+anytomd --format html page.dat
+
+# Strict mode: treat recoverable errors as hard errors
+anytomd --strict document.docx
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Conversion failure |
+| 2 | Invalid arguments |
+
+## Quick Start (Library)
 
 ```rust
 use anytomd::{convert_file, convert_bytes, ConversionOptions};
