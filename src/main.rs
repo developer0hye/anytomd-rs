@@ -38,11 +38,25 @@ fn print_warnings(warnings: &[ConversionWarning]) {
     }
 }
 
-fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
+fn build_options(cli: &Cli) -> ConversionOptions {
     let options = ConversionOptions {
         strict: cli.strict,
         ..Default::default()
     };
+
+    if let Ok(describer) = anytomd::gemini::GeminiDescriber::from_env() {
+        eprintln!("info: using Gemini for image descriptions (GEMINI_API_KEY detected)");
+        return ConversionOptions {
+            image_describer: Some(std::sync::Arc::new(describer)),
+            ..options
+        };
+    }
+
+    options
+}
+
+fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
+    let options = build_options(&cli);
 
     let mut output_buf = String::new();
     let mut had_error = false;
