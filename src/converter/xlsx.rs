@@ -125,7 +125,11 @@ fn extract_sheet_images(
 
     for drawing_target in &drawing_targets {
         // Resolve the drawing path relative to xl/worksheets/
-        let drawing_path = if let Some(stripped) = drawing_target.strip_prefix("../") {
+        // Handles both relative ("../drawings/drawing1.xml") and
+        // absolute ("/xl/drawings/drawing1.xml") target paths.
+        let drawing_path = if let Some(stripped) = drawing_target.strip_prefix('/') {
+            stripped.to_string()
+        } else if let Some(stripped) = drawing_target.strip_prefix("../") {
             format!("xl/{stripped}")
         } else {
             format!("xl/worksheets/{drawing_target}")
@@ -1448,6 +1452,251 @@ mod tests {
         assert_eq!(
             resolve_relative_path("", "media/image1.png"),
             "media/image1.png"
+        );
+    }
+
+    // -- Absolute path (openpyxl-style) tests --
+
+    /// Build a minimal XLSX with absolute paths in rels (openpyxl style).
+    ///
+    /// Uses `/xl/drawings/drawing1.xml` and `/xl/media/image1.png` instead of
+    /// relative `../drawings/...` and `../media/...` paths.
+    fn build_test_xlsx_with_image_absolute_paths(
+        sheets: &[(&str, &[&[TestCell]])],
+        image_filename: &str,
+        image_data: &[u8],
+    ) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let mut zip = ZipWriter::new(Cursor::new(buf));
+        let opts = SimpleFileOptions::default();
+
+        // [Content_Types].xml
+        let mut ct = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+             <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+             <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+             <Default Extension=\"png\" ContentType=\"image/png\"/>\
+             <Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>",
+        );
+        for (i, _) in sheets.iter().enumerate() {
+            ct.push_str(&format!(
+                "<Override PartName=\"/xl/worksheets/sheet{}.xml\" \
+                 ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>",
+                i + 1
+            ));
+        }
+        ct.push_str("</Types>");
+        zip.start_file("[Content_Types].xml", opts).unwrap();
+        zip.write_all(ct.as_bytes()).unwrap();
+
+        // _rels/.rels
+        zip.start_file("_rels/.rels", opts).unwrap();
+        zip.write_all(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+              <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+              <Relationship Id=\"rId1\" \
+              Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+              Target=\"xl/workbook.xml\"/>\
+              </Relationships>",
+        )
+        .unwrap();
+
+        // xl/workbook.xml
+        let mut wb = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
+             xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+             <sheets>",
+        );
+        for (i, (name, _)) in sheets.iter().enumerate() {
+            wb.push_str(&format!(
+                "<sheet name=\"{name}\" sheetId=\"{}\" r:id=\"rId{}\"/>",
+                i + 1,
+                i + 1
+            ));
+        }
+        wb.push_str("</sheets></workbook>");
+        zip.start_file("xl/workbook.xml", opts).unwrap();
+        zip.write_all(wb.as_bytes()).unwrap();
+
+        // xl/_rels/workbook.xml.rels
+        let mut rels = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+        );
+        for (i, _) in sheets.iter().enumerate() {
+            rels.push_str(&format!(
+                "<Relationship Id=\"rId{}\" \
+                 Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" \
+                 Target=\"worksheets/sheet{}.xml\"/>",
+                i + 1,
+                i + 1
+            ));
+        }
+        rels.push_str("</Relationships>");
+        zip.start_file("xl/_rels/workbook.xml.rels", opts).unwrap();
+        zip.write_all(rels.as_bytes()).unwrap();
+
+        // Each worksheet
+        for (i, (_, rows)) in sheets.iter().enumerate() {
+            let mut ws = String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+                 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+                 <sheetData>",
+            );
+            for (ri, row) in rows.iter().enumerate() {
+                ws.push_str(&format!("<row r=\"{}\">", ri + 1));
+                for (ci, cell) in row.iter().enumerate() {
+                    let col = test_col_letter(ci);
+                    let r = ri + 1;
+                    match cell {
+                        TestCell::Str(s) => {
+                            let escaped = s
+                                .replace('&', "&amp;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;")
+                                .replace('"', "&quot;");
+                            ws.push_str(&format!(
+                                "<c r=\"{col}{r}\" t=\"inlineStr\"><is><t>{escaped}</t></is></c>"
+                            ));
+                        }
+                        TestCell::Num(f) => {
+                            ws.push_str(&format!("<c r=\"{col}{r}\"><v>{f}</v></c>"));
+                        }
+                        TestCell::Bool(b) => {
+                            let v = if *b { 1 } else { 0 };
+                            ws.push_str(&format!("<c r=\"{col}{r}\" t=\"b\"><v>{v}</v></c>"));
+                        }
+                        TestCell::Empty => {}
+                    }
+                }
+                ws.push_str("</row>");
+            }
+            ws.push_str("</sheetData></worksheet>");
+            zip.start_file(format!("xl/worksheets/sheet{}.xml", i + 1), opts)
+                .unwrap();
+            zip.write_all(ws.as_bytes()).unwrap();
+        }
+
+        // Sheet 1 rels — absolute path to drawing (openpyxl style)
+        zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", opts)
+            .unwrap();
+        zip.write_all(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+              <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+              <Relationship Id=\"rId1\" \
+              Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" \
+              Target=\"/xl/drawings/drawing1.xml\"/>\
+              </Relationships>",
+        )
+        .unwrap();
+
+        // xl/drawings/drawing1.xml
+        zip.start_file("xl/drawings/drawing1.xml", opts).unwrap();
+        zip.write_all(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" \
+             xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+             xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+             <xdr:twoCellAnchor>\
+             <xdr:pic>\
+             <xdr:nvPicPr><xdr:cNvPr id=\"1\" name=\"Picture 1\"/><xdr:cNvPicPr/></xdr:nvPicPr>\
+             <xdr:blipFill><a:blip r:embed=\"rId1\"/></xdr:blipFill>\
+             </xdr:pic>\
+             </xdr:twoCellAnchor>\
+             </xdr:wsDr>",
+        )
+        .unwrap();
+
+        // xl/drawings/_rels/drawing1.xml.rels — absolute path to media (openpyxl style)
+        let drawing_rels = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+             <Relationship Id=\"rId1\" \
+             Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+             Target=\"/xl/media/{image_filename}\"/>\
+             </Relationships>"
+        );
+        zip.start_file("xl/drawings/_rels/drawing1.xml.rels", opts)
+            .unwrap();
+        zip.write_all(drawing_rels.as_bytes()).unwrap();
+
+        // xl/media/image1.png
+        zip.start_file(format!("xl/media/{image_filename}"), opts)
+            .unwrap();
+        zip.write_all(image_data).unwrap();
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn test_xlsx_image_extraction_absolute_paths() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image_absolute_paths(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0].0, "image1.png");
+        assert_eq!(result.images[0].1, b"fake-png-data");
+    }
+
+    #[test]
+    fn test_xlsx_image_in_markdown_absolute_paths() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image_absolute_paths(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result.markdown.contains("![](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_xlsx_image_describer_absolute_paths() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image_absolute_paths(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "A chart from openpyxl".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("![A chart from openpyxl](image1.png)"),
+            "markdown was: {}",
+            result.markdown
         );
     }
 }
