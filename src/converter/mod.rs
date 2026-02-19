@@ -1,6 +1,5 @@
 pub mod csv_conv;
 pub mod docx;
-#[cfg(feature = "gemini")]
 pub mod gemini;
 pub mod html;
 pub mod image;

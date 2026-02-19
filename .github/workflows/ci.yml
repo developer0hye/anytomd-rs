@@ -35,12 +35,6 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Lint (gemini feature)
-        run: cargo clippy --features gemini -- -D warnings
-
-      - name: Run tests (gemini feature)
-        run: cargo test --features gemini
-
       - name: Build release
         run: cargo build --release
 

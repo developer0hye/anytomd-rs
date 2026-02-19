@@ -12,10 +12,6 @@ readme = "README.md"
 keywords = ["markdown", "converter", "document", "llm"]
 categories = ["parser-implementations", "text-processing"]
 
-[features]
-default = []
-gemini = ["dep:ureq", "dep:base64"]
-
 [dependencies]
 zip = "2"
 quick-xml = "0.37"
@@ -28,8 +24,8 @@ scraper = "0.22"
 encoding_rs = "0.8"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-ureq = { version = "3", optional = true }
-base64 = { version = "0.22", optional = true }
+ureq = "3"
+base64 = "0.22"
 
 [dev-dependencies]
 assert_cmd = "2"

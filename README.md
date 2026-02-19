@@ -37,20 +37,12 @@ Format is auto-detected from magic bytes and file extension. ZIP-based formats (
 cargo add anytomd
 ```
 
-To enable the built-in Gemini image describer:
-
-```sh
-cargo add anytomd --features gemini
-```
-
 ## CLI
 
 ### Install
 
 ```sh
 cargo install anytomd
-# With Gemini image description support:
-cargo install anytomd --features gemini
 ```
 
 ### Usage
@@ -74,7 +66,7 @@ anytomd --format html page.dat
 # Strict mode: treat recoverable errors as hard errors
 anytomd --strict document.docx
 
-# Auto image descriptions (set GEMINI_API_KEY, install with --features gemini)
+# Auto image descriptions (just set GEMINI_API_KEY)
 export GEMINI_API_KEY=your-key
 anytomd presentation.pptx
 ```
@@ -121,28 +113,24 @@ for (filename, bytes) in &result.images {
 
 ### LLM-Based Image Descriptions
 
-anytomd can generate alt text for images using any LLM backend via the `ImageDescriber` trait. A built-in Google Gemini implementation is available behind the `gemini` feature.
+anytomd can generate alt text for images using any LLM backend via the `ImageDescriber` trait. A built-in Google Gemini implementation is included.
 
 ```rust
 use std::sync::Arc;
 use anytomd::{convert_file, ConversionOptions, ImageDescriber, ConvertError};
+use anytomd::gemini::GeminiDescriber;
 
-// Option 1: Use the built-in Gemini describer (requires `gemini` feature)
-#[cfg(feature = "gemini")]
-{
-    use anytomd::gemini::GeminiDescriber;
+// Option 1: Use the built-in Gemini describer
+let describer = GeminiDescriber::from_env()  // reads GEMINI_API_KEY
+    .unwrap()
+    .with_model("gemini-3-flash-preview".to_string());
 
-    let describer = GeminiDescriber::from_env()  // reads GEMINI_API_KEY
-        .unwrap()
-        .with_model("gemini-3-flash-preview".to_string());
-
-    let options = ConversionOptions {
-        image_describer: Some(Arc::new(describer)),
-        ..Default::default()
-    };
-    let result = convert_file("document.docx", &options).unwrap();
-    // Images now have LLM-generated alt text: ![A chart showing quarterly revenue](chart.png)
-}
+let options = ConversionOptions {
+    image_describer: Some(Arc::new(describer)),
+    ..Default::default()
+};
+let result = convert_file("document.docx", &options).unwrap();
+// Images now have LLM-generated alt text: ![A chart showing quarterly revenue](chart.png)
 
 // Option 2: Implement your own describer for any backend
 struct MyDescriber;
@@ -220,13 +208,6 @@ Warning codes: `SkippedElement`, `UnsupportedFeature`, `ResourceLimitReached`, `
 
 ```sh
 cargo build && cargo test && cargo clippy -- -D warnings
-```
-
-With the Gemini feature:
-
-```sh
-cargo test --features gemini
-cargo clippy --features gemini -- -D warnings
 ```
 
 ### Docker

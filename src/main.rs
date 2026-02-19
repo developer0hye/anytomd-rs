@@ -44,15 +44,12 @@ fn build_options(cli: &Cli) -> ConversionOptions {
         ..Default::default()
     };
 
-    #[cfg(feature = "gemini")]
-    {
-        if let Ok(describer) = anytomd::gemini::GeminiDescriber::from_env() {
-            eprintln!("info: using Gemini for image descriptions (GEMINI_API_KEY detected)");
-            return ConversionOptions {
-                image_describer: Some(std::sync::Arc::new(describer)),
-                ..options
-            };
-        }
+    if let Ok(describer) = anytomd::gemini::GeminiDescriber::from_env() {
+        eprintln!("info: using Gemini for image descriptions (GEMINI_API_KEY detected)");
+        return ConversionOptions {
+            image_describer: Some(std::sync::Arc::new(describer)),
+            ..options
+        };
     }
 
     options

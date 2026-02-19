@@ -9,7 +9,6 @@ pub use converter::{
 };
 pub use error::ConvertError;
 
-#[cfg(feature = "gemini")]
 pub mod gemini {
     pub use crate::converter::gemini::GeminiDescriber;
 }
