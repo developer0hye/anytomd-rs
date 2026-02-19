@@ -4,7 +4,7 @@
 
 **anytomd** (repository: `anytomd-rs`) is a pure Rust reimplementation of Microsoft's [MarkItDown](https://github.com/microsoft/markitdown) Python library. It converts various document formats (DOCX, PPTX, XLSX, PDF, HTML, CSV, JSON, etc.) into Markdown, targeting LLM consumption. A single `cargo add anytomd` with zero external runtime.
 
-**Current phase: MVP (v0.1.0)** — DOCX, PPTX, XLSX, CSV, JSON, Plain Text. See [PRD.md](./PRD.md) for full architecture and milestones.
+**Current phase: MVP (v0.1.0)** — DOCX, PPTX, XLSX, CSV, JSON, Plain Text. See [TECH_SPEC.md](./TECH_SPEC.md) for full architecture and milestones.
 
 ---
 
@@ -37,7 +37,7 @@ Do NOT translate Python line-by-line — understand the *intent*, then implement
 
 ## LLM Integration — Gemini
 
-Optional LLM-based image description via the `ImageDescriber` trait (PRD §4.9). The library makes no HTTP calls — callers inject their own implementation. Trait is provider-agnostic; Gemini is the default.
+Optional LLM-based image description via the `ImageDescriber` trait (Technical Spec §4.9). The library makes no HTTP calls — callers inject their own implementation. Trait is provider-agnostic; Gemini is the default.
 
 - Default model: **`gemini-3-flash-preview`** (production) / **`gemini-2.5-flash-lite`** (CI, cost savings)
 - Always consult the [official Gemini API docs](https://ai.google.dev/gemini-api/docs) — do NOT rely on cached knowledge
@@ -136,7 +136,7 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 
 ### Rust Style
 - Follow standard Rust conventions (`rustfmt` defaults, `clippy` clean)
-- Use `thiserror` for error types — see `ConvertError` in PRD Section 7
+- Use `thiserror` for error types — see `ConvertError` in Technical Spec Section 7
 - Prefer returning `Result<T, ConvertError>` over panicking
 - Conversion should be **best-effort**: if a single element (e.g., one corrupted table) fails to parse, skip it and continue — do not fail the entire document
 - Best-effort behavior must be observable: append structured warnings to `ConversionResult.warnings` instead of silently dropping parse failures
@@ -144,7 +144,7 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 ### Crate Structure
 - `src/lib.rs` — public API (`convert_file`, `convert_bytes`)
 - `src/converter/` — one module per format (`docx.rs`, `pptx.rs`, `xlsx.rs`, ...)
-- Each converter implements the `Converter` trait (see PRD Section 3.2)
+- Each converter implements the `Converter` trait (see Technical Spec Section 3.2)
 - Public API must include conversion options (resource limits, strict mode) and warning output
 - `src/markdown.rs` — shared Markdown generation utilities (table builder, heading formatter)
 - `src/detection.rs` — file format detection by extension and magic bytes

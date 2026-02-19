@@ -1,4 +1,4 @@
-# PRD: anytomd
+# Technical Specification: anytomd
 
 ## 1. Overview
 
