@@ -1,97 +1,23 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use chrono::{Datelike, Timelike};
 use quick_xml::events::Event;
 use zip::ZipArchive;
 
+use crate::converter::ooxml_utils::{
+    derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_path,
+    ImageInfo,
+};
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
 };
 use crate::error::ConvertError;
 use crate::markdown::{build_table, format_heading};
+use crate::zip_utils::{read_zip_bytes, read_zip_text};
 
 pub struct XlsxConverter;
-
-// ---- ZIP helpers ----
-
-/// Read a UTF-8 text file from a ZIP archive, returning None if not found.
-fn read_zip_text(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<String>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
-    Ok(Some(buf))
-}
-
-/// Read raw bytes from a ZIP archive, returning None if not found.
-fn read_zip_bytes(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<Vec<u8>>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(Some(buf))
-}
-
-/// Information about an image found during conversion.
-#[derive(Debug, Clone)]
-struct ImageInfo {
-    placeholder: String,
-    original_alt: String,
-    filename: String,
-}
-
-/// Parse a `.rels` XML file, returning a map of relationship Id → Target.
-fn parse_rels(xml: &str) -> HashMap<String, String> {
-    let mut rels = HashMap::new();
-    let mut reader = quick_xml::Reader::from_str(xml);
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = e.local_name();
-                let local_str = std::str::from_utf8(local.as_ref()).unwrap_or("");
-
-                if local_str == "Relationship" {
-                    let mut id = None;
-                    let mut target = None;
-
-                    for attr in e.attributes().flatten() {
-                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-                        let val = String::from_utf8_lossy(&attr.value).to_string();
-                        match key {
-                            "Id" => id = Some(val),
-                            "Target" => target = Some(val),
-                            _ => {}
-                        }
-                    }
-
-                    if let (Some(id), Some(target)) = (id, target) {
-                        rels.insert(id, target);
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
-        }
-    }
-
-    rels
-}
 
 /// Extract embedded images for a given sheet by following the OOXML relationship chain:
 ///
@@ -114,13 +40,13 @@ fn extract_sheet_images(
         _ => return images,
     };
 
-    let sheet_rels = parse_rels(&sheet_rels_xml);
+    let sheet_rels = parse_relationships(&sheet_rels_xml);
 
-    // Find drawing targets (relationship type contains "drawing")
+    // Find drawing targets (relationship target contains "drawing")
     let drawing_targets: Vec<String> = sheet_rels
         .values()
-        .filter(|target| target.contains("drawing"))
-        .cloned()
+        .filter(|r| r.target.contains("drawing"))
+        .map(|r| r.target.clone())
         .collect();
 
     for drawing_target in &drawing_targets {
@@ -153,11 +79,12 @@ fn extract_sheet_images(
             Ok(Some(xml)) => xml,
             _ => continue,
         };
-        let drawing_rels = parse_rels(&drawing_rels_xml);
+        let drawing_rels = parse_relationships(&drawing_rels_xml);
 
         // Step 4: Read image bytes for each blip
         for rel_id in &blip_rel_ids {
-            if let Some(image_target) = drawing_rels.get(rel_id) {
+            if let Some(rel) = drawing_rels.get(rel_id) {
+                let image_target = &rel.target;
                 let image_path = if image_target.starts_with("../") {
                     // Resolve relative to drawing path's directory
                     let drawing_dir = drawing_path
@@ -220,46 +147,6 @@ fn parse_drawing_blips(xml: &str) -> Vec<String> {
     }
 
     rel_ids
-}
-
-/// Derive the .rels path for a given file path.
-///
-/// Example: `xl/drawings/drawing1.xml` → `xl/drawings/_rels/drawing1.xml.rels`
-fn derive_rels_path(file_path: &str) -> String {
-    if let Some(pos) = file_path.rfind('/') {
-        let dir = &file_path[..pos];
-        let filename = &file_path[pos + 1..];
-        format!("{dir}/_rels/{filename}.rels")
-    } else {
-        format!("_rels/{file_path}.rels")
-    }
-}
-
-/// Resolve a relative path target against a base directory path.
-///
-/// Example: base_dir=`xl/drawings`, target=`../media/image1.png`
-///          → `xl/media/image1.png`
-fn resolve_relative_path(base_dir: &str, target: &str) -> String {
-    if !target.starts_with("../") {
-        if base_dir.is_empty() {
-            return target.to_string();
-        }
-        return format!("{base_dir}/{target}");
-    }
-
-    let mut parts: Vec<&str> = base_dir.split('/').collect();
-
-    let mut remaining = target;
-    while let Some(rest) = remaining.strip_prefix("../") {
-        parts.pop();
-        remaining = rest;
-    }
-
-    if parts.is_empty() {
-        remaining.to_string()
-    } else {
-        format!("{}/{remaining}", parts.join("/"))
-    }
 }
 
 /// Convert a 0-based column index to an Excel-style column letter (A, B, ..., Z, AA, ...).
@@ -479,58 +366,13 @@ impl Converter for XlsxConverter {
 
         // Replace placeholders with descriptions (if describer) or original alt text
         let mut markdown = sections.join("\n");
-        if let Some(ref describer) = options.image_describer {
-            for info in &image_infos {
-                if let Some(img_data) = image_bytes_map.get(&info.filename) {
-                    let mime = crate::converter::mime_from_image(&info.filename, img_data);
-                    let prompt = "Describe this image concisely for use as alt text.";
-                    match describer.describe(img_data, mime, prompt) {
-                        Ok(description) => {
-                            markdown = crate::converter::replace_image_alt_by_placeholder(
-                                &markdown,
-                                &info.placeholder,
-                                &description,
-                                &info.filename,
-                            );
-                        }
-                        Err(e) => {
-                            // Restore original (empty) alt text on failure
-                            markdown = crate::converter::replace_image_alt_by_placeholder(
-                                &markdown,
-                                &info.placeholder,
-                                &info.original_alt,
-                                &info.filename,
-                            );
-                            warnings.push(ConversionWarning {
-                                code: WarningCode::SkippedElement,
-                                message: format!(
-                                    "image description failed for '{}': {}",
-                                    info.filename, e
-                                ),
-                                location: Some(info.filename.clone()),
-                            });
-                        }
-                    }
-                } else {
-                    markdown = crate::converter::replace_image_alt_by_placeholder(
-                        &markdown,
-                        &info.placeholder,
-                        &info.original_alt,
-                        &info.filename,
-                    );
-                }
-            }
-        } else {
-            // No describer: restore original alt text
-            for info in &image_infos {
-                markdown = crate::converter::replace_image_alt_by_placeholder(
-                    &markdown,
-                    &info.placeholder,
-                    &info.original_alt,
-                    &info.filename,
-                );
-            }
-        }
+        resolve_image_placeholders(
+            &mut markdown,
+            &image_infos,
+            &image_bytes_map,
+            options.image_describer.as_deref(),
+            &mut warnings,
+        );
 
         Ok(ConversionResult {
             markdown,
@@ -1388,15 +1230,15 @@ mod tests {
     // -- Helper function unit tests --
 
     #[test]
-    fn test_parse_rels_basic() {
+    fn test_parse_relationships_basic() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
             <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
             <Relationship Id="rId1" Target="../drawings/drawing1.xml"
              Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"/>
             </Relationships>"#;
-        let rels = parse_rels(xml);
+        let rels = parse_relationships(xml);
         assert_eq!(
-            rels.get("rId1").map(|s| s.as_str()),
+            rels.get("rId1").map(|r| r.target.as_str()),
             Some("../drawings/drawing1.xml")
         );
     }

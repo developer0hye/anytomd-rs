@@ -1,26 +1,24 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use zip::ZipArchive;
 
+use crate::converter::ooxml_utils::{
+    derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_to_file,
+    ImageInfo, Relationship,
+};
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
 };
 use crate::error::ConvertError;
 use crate::markdown::build_table;
+use crate::zip_utils::{read_zip_bytes, read_zip_text};
 
 pub struct PptxConverter;
 
 // ---- Data types ----
-
-/// A resolved relationship entry from a .rels file.
-#[derive(Debug, Clone)]
-struct Relationship {
-    target: String,
-    rel_type: String,
-}
 
 /// Information about a slide in presentation order.
 #[derive(Debug, Clone)]
@@ -52,127 +50,6 @@ enum ShapeContent {
         rel_id: String,
         alt_text: Option<String>,
     },
-}
-
-// ---- ZIP helpers ----
-
-/// Read a UTF-8 text file from a ZIP archive, returning None if not found.
-fn read_zip_text(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<String>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
-    Ok(Some(buf))
-}
-
-/// Read raw bytes from a ZIP archive, returning None if not found.
-fn read_zip_bytes(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<Option<Vec<u8>>, ConvertError> {
-    let mut file = match archive.by_name(path) {
-        Ok(f) => f,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(e) => return Err(ConvertError::ZipError(e)),
-    };
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(Some(buf))
-}
-
-// ---- Path helpers ----
-
-/// Derive the .rels path for a given file path.
-///
-/// Example: `ppt/slides/slide1.xml` → `ppt/slides/_rels/slide1.xml.rels`
-fn derive_rels_path(file_path: &str) -> String {
-    if let Some(pos) = file_path.rfind('/') {
-        let dir = &file_path[..pos];
-        let filename = &file_path[pos + 1..];
-        format!("{dir}/_rels/{filename}.rels")
-    } else {
-        format!("_rels/{file_path}.rels")
-    }
-}
-
-/// Resolve a relative path target against a base path.
-///
-/// Example: base=`ppt/slides/slide1.xml`, target=`../media/image1.png`
-///          → `ppt/media/image1.png`
-fn resolve_relative_path(base: &str, target: &str) -> String {
-    if !target.starts_with("../") {
-        // Absolute or same-directory target
-        if let Some(pos) = base.rfind('/') {
-            return format!("{}/{target}", &base[..pos]);
-        }
-        return target.to_string();
-    }
-
-    // Walk up for each "../" prefix
-    let mut base_parts: Vec<&str> = base.split('/').collect();
-    // Remove the filename from base
-    base_parts.pop();
-
-    let mut target_remaining = target;
-    while let Some(rest) = target_remaining.strip_prefix("../") {
-        base_parts.pop();
-        target_remaining = rest;
-    }
-
-    if base_parts.is_empty() {
-        target_remaining.to_string()
-    } else {
-        format!("{}/{target_remaining}", base_parts.join("/"))
-    }
-}
-
-// ---- Relationships parsing ----
-
-/// Parse a .rels XML file to extract relationship ID → Relationship mapping.
-fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
-    let mut rels = HashMap::new();
-    let mut reader = Reader::from_str(xml);
-
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = e.local_name();
-                let local_str = std::str::from_utf8(local.as_ref()).unwrap_or("");
-
-                if local_str == "Relationship" {
-                    let mut id = None;
-                    let mut target = None;
-                    let mut rel_type = String::new();
-
-                    for attr in e.attributes().flatten() {
-                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-                        let val = String::from_utf8_lossy(&attr.value).to_string();
-                        match key {
-                            "Id" => id = Some(val),
-                            "Target" => target = Some(val),
-                            "Type" => rel_type = val,
-                            _ => {}
-                        }
-                    }
-
-                    if let (Some(id), Some(target)) = (id, target) {
-                        rels.insert(id, Relationship { target, rel_type });
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
-        }
-    }
-
-    rels
 }
 
 // ---- Slide order resolution ----
@@ -832,14 +709,6 @@ fn resolve_notes_path(slide_rels: &HashMap<String, Relationship>) -> Option<Stri
 
 // ---- Markdown rendering ----
 
-/// Information about an image found during rendering.
-#[derive(Debug, Clone)]
-struct ImageInfo {
-    placeholder: String,
-    original_alt: String,
-    filename: String,
-}
-
 /// Render a single slide's content as Markdown.
 ///
 /// Images are emitted with unique placeholder alt text `__img_N__`.
@@ -996,7 +865,7 @@ impl Converter for PptxConverter {
 
             // Parse notes
             let notes = if let Some(notes_target) = resolve_notes_path(&slide_rels) {
-                let notes_path = resolve_relative_path(&slide_info.path, &notes_target);
+                let notes_path = resolve_relative_to_file(&slide_info.path, &notes_target);
                 match read_zip_text(&mut archive, &notes_path)? {
                     Some(xml) => parse_notes(&xml),
                     None => None,
@@ -1012,7 +881,7 @@ impl Converter for PptxConverter {
             for shape in &shapes {
                 if let ShapeContent::Image { rel_id, .. } = shape {
                     if let Some(rel) = slide_rels.get(rel_id) {
-                        let image_path = resolve_relative_path(&slide_info.path, &rel.target);
+                        let image_path = resolve_relative_to_file(&slide_info.path, &rel.target);
                         let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
                         image_filenames.insert(rel_id.clone(), filename.to_string());
 
@@ -1062,57 +931,13 @@ impl Converter for PptxConverter {
             );
 
             // Replace placeholders with descriptions (if describer) or original alt text
-            if let Some(ref describer) = options.image_describer {
-                for info in &slide_image_infos {
-                    if let Some(img_data) = slide_image_bytes.get(&info.filename) {
-                        let mime = crate::converter::mime_from_image(&info.filename, img_data);
-                        let prompt = "Describe this image concisely for use as alt text.";
-                        match describer.describe(img_data, mime, prompt) {
-                            Ok(description) => {
-                                slide_md = crate::converter::replace_image_alt_by_placeholder(
-                                    &slide_md,
-                                    &info.placeholder,
-                                    &description,
-                                    &info.filename,
-                                );
-                            }
-                            Err(e) => {
-                                slide_md = crate::converter::replace_image_alt_by_placeholder(
-                                    &slide_md,
-                                    &info.placeholder,
-                                    &info.original_alt,
-                                    &info.filename,
-                                );
-                                warnings.push(ConversionWarning {
-                                    code: WarningCode::SkippedElement,
-                                    message: format!(
-                                        "image description failed for '{}': {}",
-                                        info.filename, e
-                                    ),
-                                    location: Some(info.filename.clone()),
-                                });
-                            }
-                        }
-                    } else {
-                        slide_md = crate::converter::replace_image_alt_by_placeholder(
-                            &slide_md,
-                            &info.placeholder,
-                            &info.original_alt,
-                            &info.filename,
-                        );
-                    }
-                }
-            } else {
-                // No describer: restore original alt text
-                for info in &slide_image_infos {
-                    slide_md = crate::converter::replace_image_alt_by_placeholder(
-                        &slide_md,
-                        &info.placeholder,
-                        &info.original_alt,
-                        &info.filename,
-                    );
-                }
-            }
+            resolve_image_placeholders(
+                &mut slide_md,
+                &slide_image_infos,
+                &slide_image_bytes,
+                options.image_describer.as_deref(),
+                &mut warnings,
+            );
 
             slide_markdowns.push(slide_md);
         }
@@ -1726,17 +1551,17 @@ mod tests {
     }
 
     #[test]
-    fn test_pptx_resolve_relative_path() {
+    fn test_pptx_resolve_relative_to_file() {
         assert_eq!(
-            resolve_relative_path("ppt/slides/slide1.xml", "../media/image1.png"),
+            resolve_relative_to_file("ppt/slides/slide1.xml", "../media/image1.png"),
             "ppt/media/image1.png"
         );
         assert_eq!(
-            resolve_relative_path("ppt/slides/slide1.xml", "../notesSlides/notesSlide1.xml"),
+            resolve_relative_to_file("ppt/slides/slide1.xml", "../notesSlides/notesSlide1.xml"),
             "ppt/notesSlides/notesSlide1.xml"
         );
         assert_eq!(
-            resolve_relative_path("ppt/slides/slide1.xml", "chart1.xml"),
+            resolve_relative_to_file("ppt/slides/slide1.xml", "chart1.xml"),
             "ppt/slides/chart1.xml"
         );
     }
