@@ -1563,6 +1563,24 @@ mod tests {
         assert!(result.markdown.contains("中文"));
     }
 
+    #[test]
+    fn test_docx_table_merged_cells_no_panic() {
+        // Table with gridSpan (horizontal merge) — converter doesn't handle merging
+        // but should not panic. The first row has 1 cell with gridSpan=2, so
+        // build_table treats it as a 1-column table (header dictates column count).
+        // Row 2's second cell "B" gets truncated — that's expected current behavior.
+        let body = r#"<w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Merged</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // No panic, and at least the merged header + first cell are preserved
+        assert!(result.markdown.contains("Merged"));
+        assert!(result.markdown.contains("A"));
+    }
+
     // ---- List tests ----
 
     #[test]

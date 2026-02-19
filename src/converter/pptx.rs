@@ -1779,6 +1779,43 @@ mod tests {
     }
 
     #[test]
+    fn test_pptx_multiple_images_on_one_slide() {
+        let data = build_test_pptx_with_image_data(
+            &[TestSlide {
+                title: Some("Gallery"),
+                body_texts: vec![],
+                notes: None,
+                table: None,
+                images: vec!["rIdImg1", "rIdImg2"],
+                image_alt_texts: vec![Some("First image"), Some("Second image")],
+            }],
+            &[
+                ("ppt/media/image1.png", b"fake-png-1"),
+                ("ppt/media/image2.png", b"fake-png-2"),
+            ],
+        );
+
+        let converter = PptxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("![First image](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("![Second image](image2.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+        // Verify ordering: image1 appears before image2
+        let pos1 = result.markdown.find("image1.png").unwrap();
+        let pos2 = result.markdown.find("image2.png").unwrap();
+        assert!(pos1 < pos2, "image1 should appear before image2");
+    }
+
+    #[test]
     fn test_pptx_image_describer_replaces_alt_text() {
         let data = build_test_pptx_with_image_data(
             &[TestSlide {

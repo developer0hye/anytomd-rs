@@ -208,6 +208,22 @@ mod tests {
     }
 
     #[test]
+    fn test_csv_pipe_in_cell_escaped() {
+        let converter = CsvConverter;
+        let input = b"Name,Command\nAlice,echo \"hello\" | grep h\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // Pipe should be escaped so it doesn't break the Markdown table
+        assert!(
+            !result.markdown.contains("| echo \"hello\" | grep h |"),
+            "raw pipe in cell should be escaped, got: {}",
+            result.markdown
+        );
+        assert!(result.markdown.contains("grep h"));
+    }
+
+    #[test]
     fn test_csv_non_utf8_decoded_with_warning() {
         let converter = CsvConverter;
         // Windows-1252 encoded CSV
