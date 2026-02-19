@@ -391,6 +391,37 @@ mod tests {
         assert!(cloned.image_describer.is_some());
     }
 
+    // ---- replace_image_alt_by_placeholder tests ----
+
+    #[test]
+    fn test_replace_image_alt_placeholder_match() {
+        let md = "![__img_0__](cat.png)";
+        let result = replace_image_alt_by_placeholder(md, "__img_0__", "A cute cat", "cat.png");
+        assert_eq!(result, "![A cute cat](cat.png)");
+    }
+
+    #[test]
+    fn test_replace_image_alt_placeholder_no_match() {
+        let md = "![__img_0__](cat.png)";
+        let result = replace_image_alt_by_placeholder(md, "__img_99__", "description", "cat.png");
+        assert_eq!(result, md);
+    }
+
+    #[test]
+    fn test_replace_image_alt_placeholder_only_first_occurrence() {
+        let md = "![__img_0__](cat.png) and ![__img_0__](cat.png)";
+        let result = replace_image_alt_by_placeholder(md, "__img_0__", "A cat", "cat.png");
+        assert_eq!(result, "![A cat](cat.png) and ![__img_0__](cat.png)");
+    }
+
+    #[test]
+    fn test_replace_image_alt_placeholder_same_filename_different_placeholders() {
+        let md = "![__img_0__](logo.png)\n![__img_1__](logo.png)";
+        let result = replace_image_alt_by_placeholder(md, "__img_1__", "Second logo", "logo.png");
+        assert!(result.contains("![__img_0__](logo.png)"));
+        assert!(result.contains("![Second logo](logo.png)"));
+    }
+
     #[test]
     fn test_conversion_options_debug_with_describer() {
         use crate::error::ConvertError;

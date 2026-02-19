@@ -727,6 +727,50 @@ mod tests {
     }
 
     #[test]
+    fn test_xlsx_uneven_row_lengths() {
+        use TestCell::*;
+        // Row 1 has 3 cols (header), row 2 has 2 cols, row 3 has 4 cols
+        // calamine pads shorter rows with Empty, truncates longer rows to header width
+        let data = build_test_xlsx(&[(
+            "Sheet1",
+            &[
+                &[Str("A"), Str("B"), Str("C")][..],
+                &[Str("1"), Str("2")],
+                &[Str("x"), Str("y"), Str("z")],
+            ],
+        )]);
+        let converter = XlsxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // Header row should be intact
+        assert!(result.markdown.contains("| A | B | C |"));
+        // Short row: calamine returns fewer cells, build_table pads
+        assert!(result.markdown.contains("1"));
+        assert!(result.markdown.contains("2"));
+        // Full row should be intact
+        assert!(result.markdown.contains("| x | y | z |"));
+    }
+
+    #[test]
+    fn test_xlsx_zip_budget_exceeded_returns_error() {
+        use TestCell::*;
+        let data = build_test_xlsx(&[("Sheet1", &[&[Str("A")][..], &[Str("1")]])]);
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            max_uncompressed_zip_bytes: 1, // impossibly small
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("exceeds limit"),
+            "error was: {err}"
+        );
+    }
+
+    #[test]
     fn test_xlsx_no_title_images() {
         use TestCell::*;
         let data = build_test_xlsx(&[("Sheet1", &[&[Str("A")][..], &[Str("1")]])]);
