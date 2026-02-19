@@ -49,6 +49,8 @@ cargo add anytomd --features gemini
 
 ```sh
 cargo install anytomd
+# With Gemini image description support:
+cargo install anytomd --features gemini
 ```
 
 ### Usage
@@ -71,6 +73,10 @@ anytomd --format html page.dat
 
 # Strict mode: treat recoverable errors as hard errors
 anytomd --strict document.docx
+
+# Auto image descriptions (set GEMINI_API_KEY, install with --features gemini)
+export GEMINI_API_KEY=your-key
+anytomd presentation.pptx
 ```
 
 ### Exit Codes
