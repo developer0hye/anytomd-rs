@@ -13,6 +13,11 @@ keywords = ["markdown", "converter", "document", "llm"]
 categories = ["parser-implementations", "text-processing"]
 exclude = ["examples/"]
 
+[features]
+default = []
+async = ["dep:futures-util"]
+async-gemini = ["async", "dep:reqwest"]
+
 [dependencies]
 zip = "2"
 quick-xml = "0.37"
@@ -27,6 +32,8 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 ureq = "3"
 base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
