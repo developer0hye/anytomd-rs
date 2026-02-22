@@ -1,3 +1,4 @@
+pub mod code;
 pub mod csv;
 pub mod docx;
 pub mod gemini;

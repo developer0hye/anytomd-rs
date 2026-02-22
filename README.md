@@ -25,6 +25,7 @@ A pure Rust tool and library that converts various document formats into Markdow
 | JSON | `.json` | Pretty-printed in fenced code blocks |
 | XML | `.xml` | Pretty-printed in fenced code blocks |
 | Images | `.png`, `.jpg`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`, `.heic`, `.avif` | Optional LLM-based alt text via `ImageDescriber` |
+| Code | `.py`, `.rs`, `.js`, `.ts`, `.c`, `.cpp`, `.go`, `.java`, `.rb`, `.swift`, `.sh`, ... | Fenced code blocks with language identifier |
 | Plain Text | `.txt`, `.md`, `.rst`, `.log`, `.toml`, `.yaml`, `.ini`, etc. | Passthrough with encoding detection (UTF-8, UTF-16, Windows-1252) |
 
 **Note on PDF:** PDF conversion is intentionally out of scope. Gemini, ChatGPT, and Claude already provide native PDF support (with plan/model-specific limits), so anytomd focuses on formats that still benefit from dedicated Markdown conversion.
