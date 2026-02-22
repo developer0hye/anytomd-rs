@@ -213,6 +213,38 @@ After completing a full converter, also run `cargo fmt --check` and `cargo build
 
 ---
 
+## Release Management
+
+GitHub releases and crates.io versions **MUST stay in sync**. The single source of truth for the version is `Cargo.toml`.
+
+### Release Procedure
+
+Follow all steps in order — do not skip any.
+
+1. **Verify unreleased changes exist** — `git log v<latest-tag>..HEAD --oneline`. If empty, there is nothing to release.
+2. **Determine version bump** — follow [SemVer](https://semver.org/):
+   - **patch** (`0.x.Y`): bug fixes, test-only changes, doc fixes
+   - **minor** (`0.X.0`): new features, new converters, new public API, non-breaking changes
+   - **major** (`X.0.0`): breaking API changes (defer until post-1.0)
+3. **Bump version in `Cargo.toml`** — update `version = "..."` in `[package]`
+4. **Create PR** — branch `chore/release-vX.Y.Z`, commit message `chore: release vX.Y.Z`
+5. **Merge PR** — follow standard PR Merge Procedure above
+6. **Publish to crates.io** — from `main` after merge: `cargo publish`
+7. **Create GitHub release** — `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes --latest` (from `main` at the merge commit)
+8. **Verify sync** — confirm `cargo search anytomd` matches the GitHub release tag and `Cargo.toml`
+
+### Version Sync Rules
+
+- **One version, three places**: `Cargo.toml` (source of truth) = crates.io = GitHub release tag
+- **Never publish to crates.io without a matching GitHub release** and vice versa
+- **Never manually edit crates.io metadata** — always go through `Cargo.toml` + `cargo publish`
+- **Tag format**: always `vX.Y.Z` (e.g., `v0.6.0`), created automatically by `gh release create`
+- **Cargo.lock**: committed to the repo for reproducible builds; updated automatically by version bump
+- If a release is partially completed (e.g., crates.io published but GitHub release missing), fix immediately — do not leave versions out of sync
+- **Yanking**: if a broken version is published to crates.io, yank it with `cargo yank --version X.Y.Z` and document in the next release notes
+
+---
+
 ## CI — GitHub Actions
 
 CI must pass on every push/PR. Matrix: `ubuntu-latest`, `macos-latest`, `windows-latest`. Stable Rust matching `rust-version`.
