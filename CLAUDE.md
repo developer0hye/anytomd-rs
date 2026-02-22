@@ -4,7 +4,7 @@
 
 **anytomd** (repository: `anytomd-rs`) is a pure Rust reimplementation of Microsoft's [MarkItDown](https://github.com/microsoft/markitdown) Python library. It converts various document formats (DOCX, PPTX, XLSX, PDF, HTML, CSV, JSON, etc.) into Markdown, targeting LLM consumption. A single `cargo add anytomd` with zero external runtime.
 
-**Current phase: MVP (v0.1.0)** — DOCX, PPTX, XLSX, CSV, JSON, Plain Text. See [TECH_SPEC.md](./TECH_SPEC.md) for full architecture and milestones.
+**Current phase:** 9 converters (DOCX, PPTX, XLSX, XLS, HTML, CSV, JSON, XML, Images, Plain Text) + async image description + Gemini integration. See [TECH_SPEC.md](./TECH_SPEC.md) for full architecture and milestones.
 
 ---
 
@@ -255,6 +255,6 @@ CI must pass on every push/PR. Matrix: `ubuntu-latest`, `macos-latest`, `windows
 `cargo clippy --features async -- -D warnings` → `cargo test --features async` → `cargo clippy --features async-gemini -- -D warnings` → `cargo test --features async-gemini`
 
 **Gemini checks** (on `push` or `ci:gemini` labeled PRs only):
-`cargo test --features gemini` → `cargo clippy --features gemini -- -D warnings` → `cargo test --features gemini --test test_gemini_live` (allowed-to-fail)
+`cargo test --test test_gemini_live` (allowed-to-fail — depends on `GEMINI_API_KEY` secret)
 
 **Rules:** Never merge code that breaks CI. Gemini live API failures do not block merging. New converters without tests = incomplete CI.
