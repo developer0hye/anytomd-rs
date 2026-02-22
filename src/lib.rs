@@ -73,15 +73,15 @@ pub fn convert_bytes(
         });
     }
 
-    use converter::csv_conv::CsvConverter;
+    use converter::csv::CsvConverter;
     use converter::docx::DocxConverter;
     use converter::html::HtmlConverter;
     use converter::image::ImageConverter;
-    use converter::json_conv::JsonConverter;
+    use converter::json::JsonConverter;
     use converter::plain_text::PlainTextConverter;
     use converter::pptx::PptxConverter;
     use converter::xlsx::XlsxConverter;
-    use converter::xml_conv::XmlConverter;
+    use converter::xml::XmlConverter;
 
     let converters: Vec<Box<dyn Converter>> = vec![
         Box::new(DocxConverter),
