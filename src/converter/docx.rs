@@ -6,7 +6,8 @@ use quick_xml::Reader;
 use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
-    parse_relationships, resolve_image_placeholders, ImageInfo, Relationship,
+    parse_relationships, resolve_image_placeholders, ImageInfo, PendingImageResolution,
+    Relationship,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -876,18 +877,18 @@ fn finalize_paragraph(
     }
 }
 
-// ---- Converter trait impl ----
+// ---- Internal conversion (parse + image extraction, no resolution) ----
 
-impl Converter for DocxConverter {
-    fn supported_extensions(&self) -> &[&str] {
-        &["docx"]
-    }
-
-    fn convert(
+impl DocxConverter {
+    /// Parse the document and extract images without resolving placeholders.
+    ///
+    /// Returns the conversion result (with unresolved placeholders in markdown)
+    /// and pending image data for later resolution (sync or async).
+    pub(crate) fn convert_inner(
         &self,
         data: &[u8],
         options: &ConversionOptions,
-    ) -> Result<ConversionResult, ConvertError> {
+    ) -> Result<(ConversionResult, PendingImageResolution), ConvertError> {
         let cursor = Cursor::new(data);
         let mut archive = ZipArchive::new(cursor)?;
 
@@ -930,7 +931,6 @@ impl Converter for DocxConverter {
         // 5. Extract embedded images if requested or if describer needs them
         let need_image_bytes = options.extract_images || options.image_describer.is_some();
         let mut images: Vec<(String, Vec<u8>)> = Vec::new();
-        // Map filename -> image bytes for describer lookup
         let mut image_bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
         if need_image_bytes {
             let mut total_image_bytes: usize = 0;
@@ -954,9 +954,7 @@ impl Converter for DocxConverter {
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
                         }
-                        if options.image_describer.is_some() {
-                            image_bytes_map.insert(filename, img_data);
-                        }
+                        image_bytes_map.insert(filename, img_data);
                     } else {
                         warnings.push(ConversionWarning {
                             code: WarningCode::ResourceLimitReached,
@@ -971,22 +969,43 @@ impl Converter for DocxConverter {
             }
         }
 
-        // 6. Replace placeholders with descriptions (if describer) or original alt text
-        let mut markdown = markdown;
-        resolve_image_placeholders(
-            &mut markdown,
-            &image_infos,
-            &image_bytes_map,
-            options.image_describer.as_deref(),
-            &mut warnings,
-        );
-
-        Ok(ConversionResult {
+        let result = ConversionResult {
             markdown,
             title,
             images,
             warnings,
-        })
+        };
+
+        let pending = PendingImageResolution {
+            infos: image_infos,
+            bytes: image_bytes_map,
+        };
+
+        Ok((result, pending))
+    }
+}
+
+// ---- Converter trait impl ----
+
+impl Converter for DocxConverter {
+    fn supported_extensions(&self) -> &[&str] {
+        &["docx"]
+    }
+
+    fn convert(
+        &self,
+        data: &[u8],
+        options: &ConversionOptions,
+    ) -> Result<ConversionResult, ConvertError> {
+        let (mut result, pending) = self.convert_inner(data, options)?;
+        resolve_image_placeholders(
+            &mut result.markdown,
+            &pending.infos,
+            &pending.bytes,
+            options.image_describer.as_deref(),
+            &mut result.warnings,
+        );
+        Ok(result)
     }
 }
 

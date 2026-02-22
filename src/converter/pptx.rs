@@ -7,7 +7,7 @@ use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
     derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_to_file,
-    ImageInfo, Relationship,
+    ImageInfo, PendingImageResolution, Relationship,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -791,16 +791,18 @@ fn render_slide(
 
 // ---- Converter trait impl ----
 
-impl Converter for PptxConverter {
-    fn supported_extensions(&self) -> &[&str] {
-        &["pptx"]
-    }
+// ---- Internal conversion (parse + image extraction, no resolution) ----
 
-    fn convert(
+impl PptxConverter {
+    /// Parse the presentation and extract images without resolving placeholders.
+    ///
+    /// Returns the conversion result (with unresolved placeholders in markdown)
+    /// and pending image data for later resolution (sync or async).
+    pub(crate) fn convert_inner(
         &self,
         data: &[u8],
         options: &ConversionOptions,
-    ) -> Result<ConversionResult, ConvertError> {
+    ) -> Result<(ConversionResult, PendingImageResolution), ConvertError> {
         let cursor = Cursor::new(data);
         let mut archive = ZipArchive::new(cursor)?;
 
@@ -826,17 +828,22 @@ impl Converter for PptxConverter {
         let slides = resolve_slide_order(&pres_xml, &pres_rels);
 
         if slides.is_empty() {
-            return Ok(ConversionResult {
-                markdown: String::new(),
-                ..Default::default()
-            });
+            return Ok((
+                ConversionResult {
+                    markdown: String::new(),
+                    ..Default::default()
+                },
+                PendingImageResolution::default(),
+            ));
         }
 
-        // 4. Process each slide
+        // 4. Process each slide — collect all image infos and bytes across slides
         let mut slide_markdowns: Vec<String> = Vec::new();
         let mut document_title: Option<String> = None;
         let mut total_image_bytes: usize = 0;
         let mut image_counter: usize = 0;
+        let mut all_image_infos: Vec<ImageInfo> = Vec::new();
+        let mut all_image_bytes: HashMap<String, Vec<u8>> = HashMap::new();
 
         for slide_info in &slides {
             // Read slide XML
@@ -877,7 +884,6 @@ impl Converter for PptxConverter {
             // Resolve image filenames and optionally extract image data
             let need_image_bytes = options.extract_images || options.image_describer.is_some();
             let mut image_filenames: HashMap<String, String> = HashMap::new();
-            let mut slide_image_bytes: HashMap<String, Vec<u8>> = HashMap::new();
             for shape in &shapes {
                 if let ShapeContent::Image { rel_id, .. } = shape {
                     if let Some(rel) = slide_rels.get(rel_id) {
@@ -892,9 +898,7 @@ impl Converter for PptxConverter {
                                     if options.extract_images {
                                         images.push((filename.to_string(), img_data.clone()));
                                     }
-                                    if options.image_describer.is_some() {
-                                        slide_image_bytes.insert(filename.to_string(), img_data);
-                                    }
+                                    all_image_bytes.insert(filename.to_string(), img_data);
                                 } else {
                                     warnings.push(ConversionWarning {
                                         code: WarningCode::ResourceLimitReached,
@@ -922,7 +926,7 @@ impl Converter for PptxConverter {
                 });
             }
 
-            let (mut slide_md, slide_image_infos) = render_slide(
+            let (slide_md, slide_image_infos) = render_slide(
                 slide_info.number,
                 &shapes,
                 &notes,
@@ -930,15 +934,7 @@ impl Converter for PptxConverter {
                 &mut image_counter,
             );
 
-            // Replace placeholders with descriptions (if describer) or original alt text
-            resolve_image_placeholders(
-                &mut slide_md,
-                &slide_image_infos,
-                &slide_image_bytes,
-                options.image_describer.as_deref(),
-                &mut warnings,
-            );
-
+            all_image_infos.extend(slide_image_infos);
             slide_markdowns.push(slide_md);
         }
 
@@ -950,12 +946,43 @@ impl Converter for PptxConverter {
             format!("{markdown}\n")
         };
 
-        Ok(ConversionResult {
+        let result = ConversionResult {
             markdown,
             title: document_title,
             images,
             warnings,
-        })
+        };
+
+        let pending = PendingImageResolution {
+            infos: all_image_infos,
+            bytes: all_image_bytes,
+        };
+
+        Ok((result, pending))
+    }
+}
+
+// ---- Converter trait impl ----
+
+impl Converter for PptxConverter {
+    fn supported_extensions(&self) -> &[&str] {
+        &["pptx"]
+    }
+
+    fn convert(
+        &self,
+        data: &[u8],
+        options: &ConversionOptions,
+    ) -> Result<ConversionResult, ConvertError> {
+        let (mut result, pending) = self.convert_inner(data, options)?;
+        resolve_image_placeholders(
+            &mut result.markdown,
+            &pending.infos,
+            &pending.bytes,
+            options.image_describer.as_deref(),
+            &mut result.warnings,
+        );
+        Ok(result)
     }
 }
 

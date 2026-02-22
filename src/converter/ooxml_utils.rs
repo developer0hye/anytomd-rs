@@ -22,6 +22,16 @@ pub(crate) struct ImageInfo {
     pub(crate) filename: String,
 }
 
+/// Collected image data from a converter's parse phase, ready for resolution.
+///
+/// Converters populate this during `convert_inner()` so that image description
+/// (sync or async) can be performed separately from document parsing.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PendingImageResolution {
+    pub(crate) infos: Vec<ImageInfo>,
+    pub(crate) bytes: HashMap<String, Vec<u8>>,
+}
+
 /// Parse a .rels XML file to extract relationship ID -> Relationship mapping.
 pub(crate) fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
     let mut rels = HashMap::new();

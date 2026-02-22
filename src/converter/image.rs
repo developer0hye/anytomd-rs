@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+
+use crate::converter::ooxml_utils::{
+    resolve_image_placeholders, ImageInfo, PendingImageResolution,
+};
 use crate::converter::{
     mime_from_image, ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
 };
@@ -24,24 +29,21 @@ fn ext_from_mime(mime: &str) -> &'static str {
     }
 }
 
-impl Converter for ImageConverter {
-    fn supported_extensions(&self) -> &[&str] {
-        &[
-            "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "heic", "heif",
-            "avif", "image",
-        ]
-    }
+// ---- Internal conversion (parse + image extraction, no resolution) ----
 
-    fn convert(
+impl ImageConverter {
+    /// Build image markdown with a placeholder and extract image bytes
+    /// without resolving the description.
+    ///
+    /// Returns the conversion result (with unresolved placeholder in markdown)
+    /// and pending image data for later resolution (sync or async).
+    pub(crate) fn convert_inner(
         &self,
         data: &[u8],
         options: &ConversionOptions,
-    ) -> Result<ConversionResult, ConvertError> {
+    ) -> Result<(ConversionResult, PendingImageResolution), ConvertError> {
         let mut warnings = Vec::new();
 
-        // Derive a synthetic filename from magic bytes / MIME detection.
-        // We pass "image" as filename so extension fallback returns octet-stream,
-        // letting magic bytes take priority.
         let mime = mime_from_image("image", data);
         let ext = ext_from_mime(mime);
         let filename = if ext.is_empty() {
@@ -61,33 +63,28 @@ impl Converter for ImageConverter {
                 ),
                 location: Some(filename.clone()),
             });
-            return Ok(ConversionResult {
-                markdown: String::new(),
-                title: None,
-                images: Vec::new(),
-                warnings,
-            });
+            return Ok((
+                ConversionResult {
+                    markdown: String::new(),
+                    title: None,
+                    images: Vec::new(),
+                    warnings,
+                },
+                PendingImageResolution::default(),
+            ));
         }
 
-        // Build alt text via ImageDescriber if available
-        let alt_text = if let Some(ref describer) = options.image_describer {
-            let prompt = "Describe this image concisely for use as alt text.";
-            match describer.describe(data, mime, prompt) {
-                Ok(description) => description,
-                Err(e) => {
-                    warnings.push(ConversionWarning {
-                        code: WarningCode::SkippedElement,
-                        message: format!("image description failed: {}", e),
-                        location: Some(filename.clone()),
-                    });
-                    String::new()
-                }
-            }
-        } else {
-            String::new()
-        };
+        let placeholder = "__img_0__".to_string();
+        let markdown = format!("![{placeholder}]({filename})\n");
 
-        let markdown = format!("![{}]({})\n", alt_text, filename);
+        let image_infos = vec![ImageInfo {
+            placeholder,
+            original_alt: String::new(),
+            filename: filename.clone(),
+        }];
+
+        let mut image_bytes_map = HashMap::new();
+        image_bytes_map.insert(filename.clone(), data.to_vec());
 
         // Extract image data if requested
         let images = if options.extract_images {
@@ -96,12 +93,46 @@ impl Converter for ImageConverter {
             Vec::new()
         };
 
-        Ok(ConversionResult {
+        let result = ConversionResult {
             markdown,
             title: None,
             images,
             warnings,
-        })
+        };
+
+        let pending = PendingImageResolution {
+            infos: image_infos,
+            bytes: image_bytes_map,
+        };
+
+        Ok((result, pending))
+    }
+}
+
+// ---- Converter trait impl ----
+
+impl Converter for ImageConverter {
+    fn supported_extensions(&self) -> &[&str] {
+        &[
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "heic", "heif",
+            "avif", "image",
+        ]
+    }
+
+    fn convert(
+        &self,
+        data: &[u8],
+        options: &ConversionOptions,
+    ) -> Result<ConversionResult, ConvertError> {
+        let (mut result, pending) = self.convert_inner(data, options)?;
+        resolve_image_placeholders(
+            &mut result.markdown,
+            &pending.infos,
+            &pending.bytes,
+            options.image_describer.as_deref(),
+            &mut result.warnings,
+        );
+        Ok(result)
     }
 }
 
