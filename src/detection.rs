@@ -72,6 +72,7 @@ fn detect_by_extension(path: &Path) -> Option<&'static str> {
         "xlsx" => Some("xlsx"),
         "xls" => Some("xls"),
         "csv" => Some("csv"),
+        "ipynb" => Some("ipynb"),
         "json" => Some("json"),
         "pdf" => Some("pdf"),
         "html" | "htm" => Some("html"),
@@ -259,6 +260,20 @@ mod tests {
                 ext
             );
         }
+    }
+
+    #[test]
+    fn test_detect_format_ipynb_by_extension() {
+        let path = PathBuf::from("notebook.ipynb");
+        assert_eq!(detect_format(&path, &[]), Some("ipynb"));
+    }
+
+    #[test]
+    fn test_detect_format_ipynb_not_caught_by_json_heuristic() {
+        // .ipynb extension should map to "ipynb", not fall through to JSON heuristic
+        let path = PathBuf::from("notebook.ipynb");
+        let content = b"{ \"cells\": [] }";
+        assert_eq!(detect_format(&path, content), Some("ipynb"));
     }
 
     #[test]

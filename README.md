@@ -22,6 +22,7 @@ A pure Rust tool and library that converts various document formats into Markdow
 | XLS | `.xls` | Legacy Excel (via calamine) |
 | HTML | `.html`, `.htm` | Full DOM: headings, tables, lists, links, blockquotes, code blocks |
 | CSV | `.csv` | Converted to Markdown tables |
+| Jupyter Notebook | `.ipynb` | Markdown cells preserved, code cells in fenced blocks with language detection |
 | JSON | `.json` | Pretty-printed in fenced code blocks |
 | XML | `.xml` | Pretty-printed in fenced code blocks |
 | Images | `.png`, `.jpg`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`, `.heic`, `.avif` | Optional LLM-based alt text via `ImageDescriber` |
