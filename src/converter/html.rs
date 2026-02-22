@@ -35,20 +35,20 @@ impl Converter for HtmlConverter {
 /// Extract document title: <title> first, fallback to first <h1>.
 fn extract_title(document: &Html) -> Option<String> {
     use scraper::Selector;
-    if let Ok(sel) = Selector::parse("title") {
-        if let Some(el) = document.select(&sel).next() {
-            let t = el.text().collect::<String>().trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
+    if let Ok(sel) = Selector::parse("title")
+        && let Some(el) = document.select(&sel).next()
+    {
+        let t = el.text().collect::<String>().trim().to_string();
+        if !t.is_empty() {
+            return Some(t);
         }
     }
-    if let Ok(sel) = Selector::parse("h1") {
-        if let Some(el) = document.select(&sel).next() {
-            let t = el.text().collect::<String>().trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
+    if let Ok(sel) = Selector::parse("h1")
+        && let Some(el) = document.select(&sel).next()
+    {
+        let t = el.text().collect::<String>().trim().to_string();
+        if !t.is_empty() {
+            return Some(t);
         }
     }
     None

@@ -28,10 +28,10 @@ pub fn detect_format(path: &Path, header_bytes: &[u8]) -> Option<&'static str> {
     }
 
     // 3. JSON heuristic (fallback for unknown extensions): starts with { or [
-    if let Some(&first) = header_bytes.iter().find(|b| !b.is_ascii_whitespace()) {
-        if first == b'{' || first == b'[' {
-            return Some("json");
-        }
+    if let Some(&first) = header_bytes.iter().find(|b| !b.is_ascii_whitespace())
+        && (first == b'{' || first == b'[')
+    {
+        return Some("json");
     }
 
     None

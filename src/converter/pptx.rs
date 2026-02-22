@@ -885,31 +885,31 @@ impl PptxConverter {
             let need_image_bytes = options.extract_images || options.image_describer.is_some();
             let mut image_filenames: HashMap<String, String> = HashMap::new();
             for shape in &shapes {
-                if let ShapeContent::Image { rel_id, .. } = shape {
-                    if let Some(rel) = slide_rels.get(rel_id) {
-                        let image_path = resolve_relative_to_file(&slide_info.path, &rel.target);
-                        let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
-                        image_filenames.insert(rel_id.clone(), filename.to_string());
+                if let ShapeContent::Image { rel_id, .. } = shape
+                    && let Some(rel) = slide_rels.get(rel_id)
+                {
+                    let image_path = resolve_relative_to_file(&slide_info.path, &rel.target);
+                    let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
+                    image_filenames.insert(rel_id.clone(), filename.to_string());
 
-                        if need_image_bytes && total_image_bytes < options.max_total_image_bytes {
-                            if let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path) {
-                                total_image_bytes += img_data.len();
-                                if total_image_bytes <= options.max_total_image_bytes {
-                                    if options.extract_images {
-                                        images.push((filename.to_string(), img_data.clone()));
-                                    }
-                                    all_image_bytes.insert(filename.to_string(), img_data);
-                                } else {
-                                    warnings.push(ConversionWarning {
-                                        code: WarningCode::ResourceLimitReached,
-                                        message: format!(
-                                            "total image bytes exceeded limit ({})",
-                                            options.max_total_image_bytes
-                                        ),
-                                        location: Some(image_path),
-                                    });
-                                }
+                    if need_image_bytes && total_image_bytes < options.max_total_image_bytes
+                        && let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path)
+                    {
+                        total_image_bytes += img_data.len();
+                        if total_image_bytes <= options.max_total_image_bytes {
+                            if options.extract_images {
+                                images.push((filename.to_string(), img_data.clone()));
                             }
+                            all_image_bytes.insert(filename.to_string(), img_data);
+                        } else {
+                            warnings.push(ConversionWarning {
+                                code: WarningCode::ResourceLimitReached,
+                                message: format!(
+                                    "total image bytes exceeded limit ({})",
+                                    options.max_total_image_bytes
+                                ),
+                                location: Some(image_path),
+                            });
                         }
                     }
                 }
