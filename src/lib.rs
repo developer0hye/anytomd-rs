@@ -47,6 +47,8 @@ pub fn convert_file(
     };
 
     let extension = match format {
+        // Code files: pass through the original extension for language detection
+        Some("code") => path.extension().and_then(|e| e.to_str()).unwrap_or("code"),
         Some(fmt) => fmt,
         None if is_zip_magic => {
             // ZIP magic bytes detected but not a known OOXML format — reject
@@ -73,6 +75,7 @@ pub fn convert_bytes(
         });
     }
 
+    use converter::code::CodeConverter;
     use converter::csv::CsvConverter;
     use converter::docx::DocxConverter;
     use converter::html::HtmlConverter;
@@ -82,6 +85,14 @@ pub fn convert_bytes(
     use converter::pptx::PptxConverter;
     use converter::xlsx::XlsxConverter;
     use converter::xml::XmlConverter;
+
+    // Code files: handled before the generic loop because CodeConverter
+    // needs the extension for language detection (the Converter trait's
+    // convert() method doesn't receive the extension).
+    let code_conv = CodeConverter;
+    if code_conv.can_convert(extension, data) {
+        return code_conv.convert_with_extension(data, extension, options);
+    }
 
     let converters: Vec<Box<dyn Converter>> = vec![
         Box::new(DocxConverter),
@@ -137,6 +148,7 @@ pub async fn convert_file_async(
     };
 
     let extension = match format {
+        Some("code") => path.extension().and_then(|e| e.to_str()).unwrap_or("code"),
         Some(fmt) => fmt,
         None if is_zip_magic => {
             return Err(ConvertError::UnsupportedFormat {

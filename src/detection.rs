@@ -80,6 +80,11 @@ fn detect_by_extension(path: &Path) -> Option<&'static str> {
         | "yaml" | "yml" => Some("txt"),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "svg" | "heic"
         | "heif" | "avif" => Some("image"),
+        "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" | "py" | "pyw" | "js" | "mjs"
+        | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx" | "rs" | "go" | "java" | "kt" | "kts"
+        | "rb" | "swift" | "cs" | "php" | "sh" | "bash" | "zsh" | "fish" | "pl" | "pm" | "lua"
+        | "r" | "scala" | "dart" | "ex" | "exs" | "erl" | "hs" | "ml" | "mli" | "sql" | "m"
+        | "mm" | "zig" | "nim" | "v" | "groovy" | "ps1" | "bat" | "cmd" => Some("code"),
         _ => None,
     }
 }
@@ -251,6 +256,26 @@ mod tests {
                 detect_format(&path, &[]),
                 Some("image"),
                 "expected 'image' for .{}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_detect_format_code_variants() {
+        let code_extensions = [
+            "c", "h", "cpp", "cc", "cxx", "hpp", "hxx", "hh", "py", "pyw", "js", "mjs", "cjs",
+            "jsx", "ts", "mts", "cts", "tsx", "rs", "go", "java", "kt", "kts", "rb", "swift", "cs",
+            "php", "sh", "bash", "zsh", "fish", "pl", "pm", "lua", "r", "scala", "dart", "ex",
+            "exs", "erl", "hs", "ml", "mli", "sql", "m", "mm", "zig", "nim", "v", "groovy", "ps1",
+            "bat", "cmd",
+        ];
+        for ext in &code_extensions {
+            let path = PathBuf::from(format!("file.{}", ext));
+            assert_eq!(
+                detect_format(&path, &[]),
+                Some("code"),
+                "expected 'code' for .{}",
                 ext
             );
         }
