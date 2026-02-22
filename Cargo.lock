@@ -86,7 +86,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "anytomd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "assert_cmd",
  "base64",
