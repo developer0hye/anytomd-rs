@@ -59,7 +59,10 @@ async fn describe_image(
     if let Some(error) = json.get("error") {
         return Err(format!(
             "API error: {}",
-            error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown")
+            error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown")
         ));
     }
 
@@ -90,10 +93,7 @@ async fn main() {
     let client = Client::new();
 
     // Load sample images and repeat to get 5 calls
-    let image_paths = &[
-        "examples/demo/sample.png",
-        "examples/demo/sample.jpg",
-    ];
+    let image_paths = &["examples/demo/sample.png", "examples/demo/sample.jpg"];
 
     let raw: Vec<(String, Vec<u8>)> = image_paths
         .iter()
@@ -123,7 +123,11 @@ async fn main() {
         let result = describe_image(&client, &api_key, data, mime).await;
         let t1 = seq_start.elapsed();
         match result {
-            Ok(desc) => println!("  {path}  start={t0:.2?}  end={t1:.2?}  ({:.2?})  {}", t1 - t0, truncate(&desc, 60)),
+            Ok(desc) => println!(
+                "  {path}  start={t0:.2?}  end={t1:.2?}  ({:.2?})  {}",
+                t1 - t0,
+                truncate(&desc, 60)
+            ),
             Err(e) => println!("  {path}  start={t0:.2?}  end={t1:.2?}  ERROR: {e}"),
         }
     }
@@ -151,8 +155,14 @@ async fn main() {
 
     for handle in handles {
         match handle.await {
-            Ok((path, t0, t1, Ok(desc))) => println!("  {path}  start={t0:.2?}  end={t1:.2?}  ({:.2?})  {}", t1 - t0, truncate(&desc, 60)),
-            Ok((path, t0, t1, Err(e))) => println!("  {path}  start={t0:.2?}  end={t1:.2?}  ERROR: {e}"),
+            Ok((path, t0, t1, Ok(desc))) => println!(
+                "  {path}  start={t0:.2?}  end={t1:.2?}  ({:.2?})  {}",
+                t1 - t0,
+                truncate(&desc, 60)
+            ),
+            Ok((path, t0, t1, Err(e))) => {
+                println!("  {path}  start={t0:.2?}  end={t1:.2?}  ERROR: {e}")
+            }
             Err(e) => println!("  task panicked: {e}"),
         }
     }
