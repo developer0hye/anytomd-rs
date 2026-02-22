@@ -38,5 +38,17 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Lint (async feature)
+        run: cargo clippy --features async -- -D warnings
+
+      - name: Test (async feature)
+        run: cargo test --features async
+
+      - name: Lint (async-gemini feature)
+        run: cargo clippy --features async-gemini -- -D warnings
+
+      - name: Test (async-gemini feature)
+        run: cargo test --features async-gemini
+
       - name: CLI smoke test
         run: echo "hello" | cargo run -- --format txt

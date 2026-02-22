@@ -42,6 +42,22 @@ Optional LLM-based image description via the `ImageDescriber` trait (Technical S
 - Default model: **`gemini-3-flash-preview`** (production) / **`gemini-2.5-flash-lite`** (CI, cost savings)
 - Always consult the [official Gemini API docs](https://ai.google.dev/gemini-api/docs) — do NOT rely on cached knowledge
 - `GeminiDescriber`: `new(api_key)` or `from_env()` (reads `GEMINI_API_KEY`). Never hardcode/log/persist API keys.
+- `AsyncGeminiDescriber`: async counterpart using `reqwest` (behind `async-gemini` feature). Same API: `new()`, `from_env()`, `with_model()`.
+
+### Async Image Description
+
+The library supports concurrent image description via feature flags:
+
+| Feature | Dependencies | Description |
+|---------|-------------|-------------|
+| `async` | `futures-util` | `AsyncImageDescriber` trait, `AsyncConversionOptions`, `convert_file_async()`, `convert_bytes_async()` |
+| `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent Gemini API calls |
+
+**Architecture:** Two-phase conversion — `convert_inner()` parses the document and collects image placeholders, then `resolve_image_placeholders_async()` resolves all descriptions concurrently via `futures_util::future::join_all`. No `tokio` in library deps — caller provides the runtime.
+
+**Key types:**
+- `AsyncImageDescriber` trait: uses `Pin<Box<dyn Future>>` for dyn-compatibility (async fn in traits not dyn-safe in Rust 1.90)
+- `AsyncConversionOptions`: wraps `ConversionOptions` with `async_image_describer: Option<Arc<dyn AsyncImageDescriber>>`
 
 ### CI Gemini Testing
 
@@ -202,6 +218,9 @@ After completing a full converter, also run `cargo fmt --check` and `cargo build
 CI must pass on every push/PR. Matrix: `ubuntu-latest`, `macos-latest`, `windows-latest`. Stable Rust matching `rust-version`.
 
 **Required checks:** `cargo fmt --check` → `cargo clippy -- -D warnings` → `cargo test` → `cargo build --release`
+
+**Async feature checks** (every push/PR):
+`cargo clippy --features async -- -D warnings` → `cargo test --features async` → `cargo clippy --features async-gemini -- -D warnings` → `cargo test --features async-gemini`
 
 **Gemini checks** (on `push` or `ci:gemini` labeled PRs only):
 `cargo test --features gemini` → `cargo clippy --features gemini -- -D warnings` → `cargo test --features gemini --test test_gemini_live` (allowed-to-fail)
