@@ -272,14 +272,26 @@ mod tests {
     /// to prevent race conditions when tests run in parallel.
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+    fn set_env_key(value: &str) {
+        // SAFETY: All callers are inside `with_env_key`, which holds `ENV_MUTEX`,
+        // serializing process environment mutation for this test module.
+        unsafe { std::env::set_var("GEMINI_API_KEY", value) };
+    }
+
+    fn remove_env_key() {
+        // SAFETY: All callers are inside `with_env_key`, which holds `ENV_MUTEX`,
+        // serializing process environment mutation for this test module.
+        unsafe { std::env::remove_var("GEMINI_API_KEY") };
+    }
+
     /// Saves the current `GEMINI_API_KEY` value, runs the closure, then restores it.
     fn with_env_key<F: FnOnce()>(f: F) {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let original = std::env::var("GEMINI_API_KEY").ok();
         f();
         match original {
-            Some(v) => std::env::set_var("GEMINI_API_KEY", v),
-            None => std::env::remove_var("GEMINI_API_KEY"),
+            Some(v) => set_env_key(&v),
+            None => remove_env_key(),
         }
     }
 
@@ -300,7 +312,7 @@ mod tests {
     #[test]
     fn test_gemini_describer_from_env_missing_key() {
         with_env_key(|| {
-            std::env::remove_var("GEMINI_API_KEY");
+            remove_env_key();
             let result = GeminiDescriber::from_env();
             assert!(result.is_err());
             let err = result.unwrap_err();
@@ -314,7 +326,7 @@ mod tests {
     #[test]
     fn test_gemini_describer_from_env_with_key() {
         with_env_key(|| {
-            std::env::set_var("GEMINI_API_KEY", "test-env-key");
+            set_env_key("test-env-key");
             let result = GeminiDescriber::from_env();
             assert!(result.is_ok());
             let describer = result.unwrap();
@@ -421,7 +433,7 @@ mod tests {
         #[test]
         fn test_async_gemini_describer_from_env_missing_key() {
             super::with_env_key(|| {
-                std::env::remove_var("GEMINI_API_KEY");
+                super::remove_env_key();
                 let result = AsyncGeminiDescriber::from_env();
                 assert!(result.is_err());
                 let err = result.unwrap_err();
@@ -435,7 +447,7 @@ mod tests {
         #[test]
         fn test_async_gemini_describer_from_env_with_key() {
             super::with_env_key(|| {
-                std::env::set_var("GEMINI_API_KEY", "test-async-env-key");
+                super::set_env_key("test-async-env-key");
                 let result = AsyncGeminiDescriber::from_env();
                 assert!(result.is_ok());
                 let describer = result.unwrap();

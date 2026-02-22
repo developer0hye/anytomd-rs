@@ -179,7 +179,7 @@ fn parse_numbering(xml: &str) -> HashMap<(String, u8), NumberingLevel> {
                         }
                     }
                     "numFmt" if in_lvl => {
-                        if let (Some(ref abs_id), Some(lvl)) = (&current_abstract_id, current_lvl) {
+                        if let (Some(abs_id), Some(lvl)) = (&current_abstract_id, current_lvl) {
                             for attr in e.attributes().flatten() {
                                 let local_name = attr.key.local_name();
                                 let k = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
