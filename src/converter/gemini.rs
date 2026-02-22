@@ -8,7 +8,8 @@ use std::pin::Pin;
 
 /// Built-in `ImageDescriber` that uses the Google Gemini API.
 ///
-/// Requires the `gemini` feature flag.
+/// Always available (no feature flag required). For the async variant,
+/// see `AsyncGeminiDescriber` (requires the `async-gemini` feature).
 ///
 /// # Example
 ///
