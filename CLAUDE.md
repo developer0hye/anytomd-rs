@@ -125,6 +125,21 @@ Follow all steps in order — do not skip any.
 - MSRV is pinned by `rust-version` in `Cargo.toml` — stable only, no nightly features
 - Do not bump `rust-version` in unrelated PRs — use a dedicated chore PR
 
+### MSRV Policy — 6-Month Rolling Minimum
+
+This project follows a **6-month rolling MSRV policy** (aligned with [tokio](https://crates.io/crates/tokio) and other major crates):
+
+- The `rust-version` in `Cargo.toml` MUST target a Rust stable release that was published **at least 6 months ago**
+- Rust stable releases ship every 6 weeks — consult [releases.rs](https://releases.rs/) for exact dates
+- When a newer Rust version crosses the 6-month threshold, updating the MSRV is **allowed but not required** — only bump when a newer language feature or dependency demands it
+- **Floor:** the MSRV can never go below the minimum required by `edition` in `Cargo.toml` (edition 2024 = Rust 1.85)
+
+**Before any MSRV change:**
+1. Verify no language features or APIs exclusive to versions above the target are used
+2. Confirm all dependencies compile on the target version (`cargo check` with the target toolchain, or review dependency MSRV metadata)
+3. Update CI matrix to include the new MSRV version
+4. Update Dockerfile `RUST_VERSION` ARG to match
+
 ---
 
 ## Docker Development Environment

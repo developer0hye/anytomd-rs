@@ -2,7 +2,7 @@
 name = "anytomd"
 version = "0.8.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.89"
 license = "Apache-2.0"
 description = "Pure Rust library that converts various document formats into Markdown"
 repository = "https://github.com/developer0hye/anytomd-rs"
