@@ -12,6 +12,11 @@ pub mod xml_conv;
 
 use std::sync::Arc;
 
+#[cfg(feature = "async")]
+use std::future::Future;
+#[cfg(feature = "async")]
+use std::pin::Pin;
+
 use crate::error::ConvertError;
 
 /// Trait for generating image descriptions using an LLM or other backend.
@@ -225,6 +230,55 @@ pub(crate) fn replace_image_alt_by_placeholder(
         result
     } else {
         markdown.to_string()
+    }
+}
+
+/// Async trait for generating image descriptions using an LLM or other backend.
+///
+/// This is the async counterpart of [`ImageDescriber`]. It uses
+/// `Pin<Box<dyn Future>>` for dyn-compatibility (async fn in traits is not
+/// dyn-safe).
+///
+/// Requires the `async` feature.
+#[cfg(feature = "async")]
+pub trait AsyncImageDescriber: Send + Sync {
+    /// Describe the given image asynchronously.
+    ///
+    /// - `image_bytes`: raw image data (PNG, JPEG, etc.)
+    /// - `mime_type`: MIME type of the image (e.g., `"image/png"`)
+    /// - `prompt`: instruction for the LLM (e.g., "Describe this image concisely")
+    fn describe<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>;
+}
+
+/// Conversion options for the async API.
+///
+/// Wraps the base [`ConversionOptions`] and adds an async image describer.
+///
+/// Requires the `async` feature.
+#[cfg(feature = "async")]
+#[derive(Default)]
+pub struct AsyncConversionOptions {
+    /// Base conversion options (resource limits, extract_images, strict mode).
+    pub base: ConversionOptions,
+    /// Optional async image describer for concurrent LLM-based alt text generation.
+    pub async_image_describer: Option<Arc<dyn AsyncImageDescriber>>,
+}
+
+#[cfg(feature = "async")]
+impl std::fmt::Debug for AsyncConversionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncConversionOptions")
+            .field("base", &self.base)
+            .field(
+                "async_image_describer",
+                &self.async_image_describer.as_ref().map(|_| ".."),
+            )
+            .finish()
     }
 }
 

@@ -208,6 +208,70 @@ pub(crate) fn resolve_image_placeholders(
     }
 }
 
+/// Async version of [`resolve_image_placeholders`].
+///
+/// Describes all images concurrently using `futures_util::future::join_all`,
+/// then replaces placeholders in the markdown. Falls back to original alt text
+/// on error, just like the sync version.
+#[cfg(feature = "async")]
+pub(crate) async fn resolve_image_placeholders_async(
+    markdown: &mut String,
+    image_infos: &[ImageInfo],
+    image_bytes: &HashMap<String, Vec<u8>>,
+    describer: &dyn crate::converter::AsyncImageDescriber,
+    warnings: &mut Vec<ConversionWarning>,
+) {
+    use futures_util::future::join_all;
+
+    let prompt = "Describe this image concisely for use as alt text.";
+
+    // Build futures for all images that have bytes available
+    let futures: Vec<_> = image_infos
+        .iter()
+        .map(|info| {
+            let bytes_opt = image_bytes.get(&info.filename);
+            async move {
+                if let Some(img_data) = bytes_opt {
+                    let mime = crate::converter::mime_from_image(&info.filename, img_data);
+                    match describer.describe(img_data, mime, prompt).await {
+                        Ok(description) => (info, Some(description), None),
+                        Err(e) => (info, None, Some(e)),
+                    }
+                } else {
+                    (info, None, None)
+                }
+            }
+        })
+        .collect();
+
+    let results = join_all(futures).await;
+
+    for (info, description, error) in results {
+        if let Some(desc) = description {
+            *markdown = replace_image_alt_by_placeholder(
+                markdown,
+                &info.placeholder,
+                &desc,
+                &info.filename,
+            );
+        } else {
+            *markdown = replace_image_alt_by_placeholder(
+                markdown,
+                &info.placeholder,
+                &info.original_alt,
+                &info.filename,
+            );
+            if let Some(e) = error {
+                warnings.push(ConversionWarning {
+                    code: WarningCode::SkippedElement,
+                    message: format!("image description failed for '{}': {}", info.filename, e),
+                    location: Some(info.filename.clone()),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +474,128 @@ mod tests {
         assert!(md.contains("![A cat](cat.png)"));
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].message.contains("image description failed"));
+    }
+
+    // ---- Async resolve tests (require tokio dev-dependency) ----
+
+    #[cfg(feature = "async")]
+    mod async_tests {
+        use super::*;
+        use crate::converter::AsyncImageDescriber;
+        use crate::error::ConvertError;
+        use std::future::Future;
+        use std::pin::Pin;
+
+        struct MockAsyncDescriber;
+        impl AsyncImageDescriber for MockAsyncDescriber {
+            fn describe<'a>(
+                &'a self,
+                _image_bytes: &'a [u8],
+                _mime_type: &'a str,
+                _prompt: &'a str,
+            ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>
+            {
+                Box::pin(async { Ok("async description".to_string()) })
+            }
+        }
+
+        struct FailingAsyncDescriber;
+        impl AsyncImageDescriber for FailingAsyncDescriber {
+            fn describe<'a>(
+                &'a self,
+                _image_bytes: &'a [u8],
+                _mime_type: &'a str,
+                _prompt: &'a str,
+            ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>
+            {
+                Box::pin(async {
+                    Err(ConvertError::ImageDescriptionError {
+                        reason: "async API error".to_string(),
+                    })
+                })
+            }
+        }
+
+        #[tokio::test]
+        async fn test_resolve_image_placeholders_async_with_describer() {
+            let mut md = "![__img_0__](cat.png)\n![__img_1__](dog.png)".to_string();
+            let infos = vec![
+                ImageInfo {
+                    placeholder: "__img_0__".to_string(),
+                    original_alt: "A cat".to_string(),
+                    filename: "cat.png".to_string(),
+                },
+                ImageInfo {
+                    placeholder: "__img_1__".to_string(),
+                    original_alt: "A dog".to_string(),
+                    filename: "dog.png".to_string(),
+                },
+            ];
+            let mut image_bytes = HashMap::new();
+            image_bytes.insert("cat.png".to_string(), vec![0x89, b'P', b'N', b'G']);
+            image_bytes.insert("dog.png".to_string(), vec![0xFF, 0xD8, 0xFF]);
+            let mut warnings = Vec::new();
+            let describer = MockAsyncDescriber;
+            resolve_image_placeholders_async(
+                &mut md,
+                &infos,
+                &image_bytes,
+                &describer,
+                &mut warnings,
+            )
+            .await;
+            assert!(md.contains("![async description](cat.png)"));
+            assert!(md.contains("![async description](dog.png)"));
+            assert!(warnings.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_resolve_image_placeholders_async_error_fallback() {
+            let mut md = "![__img_0__](cat.png)".to_string();
+            let infos = vec![ImageInfo {
+                placeholder: "__img_0__".to_string(),
+                original_alt: "A cat".to_string(),
+                filename: "cat.png".to_string(),
+            }];
+            let mut image_bytes = HashMap::new();
+            image_bytes.insert("cat.png".to_string(), vec![0x89, b'P', b'N', b'G']);
+            let mut warnings = Vec::new();
+            let describer = FailingAsyncDescriber;
+            resolve_image_placeholders_async(
+                &mut md,
+                &infos,
+                &image_bytes,
+                &describer,
+                &mut warnings,
+            )
+            .await;
+            assert!(md.contains("![A cat](cat.png)"));
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].message.contains("image description failed"));
+        }
+
+        #[tokio::test]
+        async fn test_resolve_image_placeholders_async_missing_bytes() {
+            let mut md = "![__img_0__](cat.png)".to_string();
+            let infos = vec![ImageInfo {
+                placeholder: "__img_0__".to_string(),
+                original_alt: "A cat".to_string(),
+                filename: "cat.png".to_string(),
+            }];
+            let image_bytes = HashMap::new(); // no bytes
+            let mut warnings = Vec::new();
+            let describer = MockAsyncDescriber;
+            resolve_image_placeholders_async(
+                &mut md,
+                &infos,
+                &image_bytes,
+                &describer,
+                &mut warnings,
+            )
+            .await;
+            // Falls back to original alt text
+            assert!(md.contains("![A cat](cat.png)"));
+            assert!(warnings.is_empty());
+        }
     }
 }

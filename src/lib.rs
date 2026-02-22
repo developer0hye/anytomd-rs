@@ -4,6 +4,8 @@ pub mod error;
 pub mod markdown;
 pub(crate) mod zip_utils;
 
+#[cfg(feature = "async")]
+pub use converter::{AsyncConversionOptions, AsyncImageDescriber};
 pub use converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, ImageDescriber, WarningCode,
 };
@@ -99,6 +101,140 @@ pub fn convert_bytes(
     Err(ConvertError::UnsupportedFormat {
         extension: extension.to_string(),
     })
+}
+
+/// Convert a file at the given path to Markdown with async image description.
+///
+/// The format is auto-detected from magic bytes and file extension.
+/// If an `async_image_describer` is set, all image descriptions are resolved
+/// concurrently. The caller provides the async runtime.
+///
+/// Requires the `async` feature.
+#[cfg(feature = "async")]
+pub async fn convert_file_async(
+    path: impl AsRef<Path>,
+    options: &converter::AsyncConversionOptions,
+) -> Result<ConversionResult, ConvertError> {
+    let path = path.as_ref();
+    let data = std::fs::read(path)?;
+
+    if data.len() > options.base.max_input_bytes {
+        return Err(ConvertError::InputTooLarge {
+            size: data.len(),
+            limit: options.base.max_input_bytes,
+        });
+    }
+
+    let header = &data[..data.len().min(16)];
+    let format = detection::detect_format(path, header);
+
+    let (format, is_zip_magic) = match format {
+        Some("zip") => (detection::detect_zip_format(&data), true),
+        other => (other, false),
+    };
+
+    let extension = match format {
+        Some(fmt) => fmt,
+        None if is_zip_magic => {
+            return Err(ConvertError::UnsupportedFormat {
+                extension: "zip".to_string(),
+            });
+        }
+        None => path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+    };
+
+    convert_bytes_async(&data, extension, options).await
+}
+
+/// Convert raw bytes to Markdown with async image description.
+///
+/// For image-bearing formats (docx, pptx, xlsx, image), uses `convert_inner()`
+/// for parsing then resolves images concurrently via the async describer.
+/// For other formats, falls through to the sync `convert()`.
+///
+/// Requires the `async` feature.
+#[cfg(feature = "async")]
+pub async fn convert_bytes_async(
+    data: &[u8],
+    extension: &str,
+    options: &converter::AsyncConversionOptions,
+) -> Result<ConversionResult, ConvertError> {
+    if data.len() > options.base.max_input_bytes {
+        return Err(ConvertError::InputTooLarge {
+            size: data.len(),
+            limit: options.base.max_input_bytes,
+        });
+    }
+
+    // For image-bearing formats, use convert_inner() + async resolve
+    if let Some(ref describer) = options.async_image_describer {
+        match extension {
+            "docx" => {
+                let conv = converter::docx::DocxConverter;
+                let (mut result, pending) = conv.convert_inner(data, &options.base)?;
+                if !pending.infos.is_empty() {
+                    converter::ooxml_utils::resolve_image_placeholders_async(
+                        &mut result.markdown,
+                        &pending.infos,
+                        &pending.bytes,
+                        describer.as_ref(),
+                        &mut result.warnings,
+                    )
+                    .await;
+                }
+                return Ok(result);
+            }
+            "pptx" => {
+                let conv = converter::pptx::PptxConverter;
+                let (mut result, pending) = conv.convert_inner(data, &options.base)?;
+                if !pending.infos.is_empty() {
+                    converter::ooxml_utils::resolve_image_placeholders_async(
+                        &mut result.markdown,
+                        &pending.infos,
+                        &pending.bytes,
+                        describer.as_ref(),
+                        &mut result.warnings,
+                    )
+                    .await;
+                }
+                return Ok(result);
+            }
+            "xlsx" | "xls" => {
+                let conv = converter::xlsx::XlsxConverter;
+                let (mut result, pending) = conv.convert_inner(data, &options.base)?;
+                if !pending.infos.is_empty() {
+                    converter::ooxml_utils::resolve_image_placeholders_async(
+                        &mut result.markdown,
+                        &pending.infos,
+                        &pending.bytes,
+                        describer.as_ref(),
+                        &mut result.warnings,
+                    )
+                    .await;
+                }
+                return Ok(result);
+            }
+            ext if converter::image::ImageConverter.can_convert(ext, data) => {
+                let conv = converter::image::ImageConverter;
+                let (mut result, pending) = conv.convert_inner(data, &options.base)?;
+                if !pending.infos.is_empty() {
+                    converter::ooxml_utils::resolve_image_placeholders_async(
+                        &mut result.markdown,
+                        &pending.infos,
+                        &pending.bytes,
+                        describer.as_ref(),
+                        &mut result.warnings,
+                    )
+                    .await;
+                }
+                return Ok(result);
+            }
+            _ => {}
+        }
+    }
+
+    // Fallback: use sync convert for non-image formats or when no async describer
+    convert_bytes(data, extension, &options.base)
 }
 
 #[cfg(test)]
