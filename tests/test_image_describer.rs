@@ -23,8 +23,8 @@ impl ImageDescriber for MockDescriber {
 
 /// Build a minimal DOCX ZIP with an embedded image for integration tests.
 fn build_docx_with_image() -> Vec<u8> {
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     let buf = Vec::new();
     let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -64,8 +64,8 @@ fn build_docx_with_image() -> Vec<u8> {
 
 /// Build a minimal PPTX ZIP with an embedded image for integration tests.
 fn build_pptx_with_image() -> Vec<u8> {
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     let buf = Vec::new();
     let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -176,8 +176,8 @@ fn test_pptx_without_describer_has_empty_alt() {
 /// Contains a single sheet "Sheet1" with one data row and an image (image1.png)
 /// embedded via the drawing relationship chain.
 fn build_xlsx_with_image() -> Vec<u8> {
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     let buf = Vec::new();
     let mut zip = ZipWriter::new(Cursor::new(buf));

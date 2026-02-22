@@ -1,6 +1,6 @@
 mod common;
 
-use anytomd::{convert_file, ConversionOptions};
+use anytomd::{ConversionOptions, convert_file};
 use common::normalize;
 
 /// Integration test: sample.xlsx end-to-end conversion via convert_file.

@@ -1,6 +1,6 @@
 mod common;
 
-use anytomd::{convert_file, ConversionOptions};
+use anytomd::{ConversionOptions, convert_file};
 use common::normalize;
 
 /// Content coverage test: verify key elements are present in the converted output.
@@ -34,12 +34,16 @@ fn test_pptx_convert_file_sample() {
     assert!(result.markdown.contains("| Gamma | 300 | Active |"));
 
     // Speaker notes
-    assert!(result
-        .markdown
-        .contains("> Note: Remember to explain the data table."));
-    assert!(result
-        .markdown
-        .contains("> Note: Test multilingual rendering."));
+    assert!(
+        result
+            .markdown
+            .contains("> Note: Remember to explain the data table.")
+    );
+    assert!(
+        result
+            .markdown
+            .contains("> Note: Test multilingual rendering.")
+    );
 
     // Slide separators
     assert!(result.markdown.contains("\n\n---\n\n"));
