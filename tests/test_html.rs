@@ -1,6 +1,6 @@
 mod common;
 
-use anytomd::{convert_file, ConversionOptions};
+use anytomd::{ConversionOptions, convert_file};
 use common::normalize;
 
 /// Integration test: sample.html end-to-end conversion via convert_file.
@@ -28,9 +28,11 @@ fn test_html_convert_file_sample() {
     assert!(result.markdown.contains("`inline code`"));
 
     // Links and images
-    assert!(result
-        .markdown
-        .contains("[Example Site](https://example.com)"));
+    assert!(
+        result
+            .markdown
+            .contains("[Example Site](https://example.com)")
+    );
     assert!(result.markdown.contains("![Company Logo](logo.png)"));
 
     // Lists
@@ -51,9 +53,11 @@ fn test_html_convert_file_sample() {
 
     // Blockquote
     assert!(result.markdown.contains("> "));
-    assert!(result
-        .markdown
-        .contains("The only way to do great work is to love what you do."));
+    assert!(
+        result
+            .markdown
+            .contains("The only way to do great work is to love what you do.")
+    );
 
     // Horizontal rule
     assert!(result.markdown.contains("---"));

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
-    parse_relationships, resolve_image_placeholders, ImageInfo, PendingImageResolution,
-    Relationship,
+    ImageInfo, PendingImageResolution, Relationship, parse_relationships,
+    resolve_image_placeholders,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -1032,8 +1032,8 @@ mod tests {
         numbering_xml: Option<&str>,
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1169,9 +1169,11 @@ mod tests {
             .unwrap();
         assert!(result.markdown.contains("First paragraph."));
         assert!(result.markdown.contains("Second paragraph."));
-        assert!(result
-            .markdown
-            .contains("First paragraph.\n\nSecond paragraph."));
+        assert!(
+            result
+                .markdown
+                .contains("First paragraph.\n\nSecond paragraph.")
+        );
     }
 
     #[test]
@@ -1412,9 +1414,11 @@ mod tests {
         let result = converter
             .convert(&data, &ConversionOptions::default())
             .unwrap();
-        assert!(result
-            .markdown
-            .contains("[**Bold Link**](https://example.com)"));
+        assert!(
+            result
+                .markdown
+                .contains("[**Bold Link**](https://example.com)")
+        );
     }
 
     #[test]
@@ -1858,8 +1862,8 @@ mod tests {
         image_data: &[u8],
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -2046,8 +2050,8 @@ mod tests {
         images: &[(&str, &[u8])], // (zip_path, data)
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));

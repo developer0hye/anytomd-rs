@@ -614,9 +614,11 @@ mod tests {
         assert!(result.markdown.contains("First paragraph"));
         assert!(result.markdown.contains("Second paragraph"));
         // Should have blank line between paragraphs
-        assert!(result
-            .markdown
-            .contains("First paragraph\n\nSecond paragraph"));
+        assert!(
+            result
+                .markdown
+                .contains("First paragraph\n\nSecond paragraph")
+        );
     }
 
     #[test]

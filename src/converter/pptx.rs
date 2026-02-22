@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
-    derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_to_file,
-    ImageInfo, PendingImageResolution, Relationship,
+    ImageInfo, PendingImageResolution, Relationship, derive_rels_path, parse_relationships,
+    resolve_image_placeholders, resolve_relative_to_file,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -892,7 +892,8 @@ impl PptxConverter {
                     let filename = image_path.rsplit('/').next().unwrap_or(&image_path);
                     image_filenames.insert(rel_id.clone(), filename.to_string());
 
-                    if need_image_bytes && total_image_bytes < options.max_total_image_bytes
+                    if need_image_bytes
+                        && total_image_bytes < options.max_total_image_bytes
                         && let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path)
                     {
                         total_image_bytes += img_data.len();
@@ -1009,8 +1010,8 @@ mod tests {
     /// Build a minimal PPTX ZIP in memory.
     fn build_test_pptx(slides: &[TestSlide]) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1505,8 +1506,8 @@ mod tests {
     #[test]
     fn test_pptx_missing_presentation_xml() {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1532,8 +1533,8 @@ mod tests {
     #[test]
     fn test_pptx_missing_slide_file_graceful() {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1710,8 +1711,8 @@ mod tests {
         image_data: &[(&str, &[u8])], // (path in zip, data)
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1901,10 +1902,12 @@ mod tests {
             "markdown was: {}",
             result.markdown
         );
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.code == WarningCode::SkippedElement
-                && w.message.contains("image description failed")),);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::SkippedElement
+                    && w.message.contains("image description failed")),
+        );
     }
 }

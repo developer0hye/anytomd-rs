@@ -1,6 +1,6 @@
 mod common;
 
-use anytomd::{convert_file, ConversionOptions};
+use anytomd::{ConversionOptions, convert_file};
 use common::normalize;
 
 /// Integration test: sample.xls end-to-end conversion via convert_file.
@@ -14,17 +14,23 @@ fn test_xls_convert_file_sample() {
     assert!(result.markdown.contains("## Sheet1"));
     assert!(result.markdown.contains("| Alpha | Beta | Gamma | Delta |"));
     assert!(result.markdown.contains("| 89 | 82 | 100 | 12 |"));
-    assert!(result
-        .markdown
-        .contains("6ff4173b-42a5-4784-9b19-f49caff4d93d"));
+    assert!(
+        result
+            .markdown
+            .contains("6ff4173b-42a5-4784-9b19-f49caff4d93d")
+    );
     // Sheet 2 content
-    assert!(result
-        .markdown
-        .contains("## 09060124-b5e7-4717-9d07-3c046eb"));
+    assert!(
+        result
+            .markdown
+            .contains("## 09060124-b5e7-4717-9d07-3c046eb")
+    );
     assert!(result.markdown.contains("| ColA | ColB | ColC | ColD |"));
-    assert!(result
-        .markdown
-        .contains("affc7dad-52dc-4b98-9b5d-51e65d8a8ad0"));
+    assert!(
+        result
+            .markdown
+            .contains("affc7dad-52dc-4b98-9b5d-51e65d8a8ad0")
+    );
 }
 
 /// Golden test: compare normalized output against expected file.

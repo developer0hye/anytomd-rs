@@ -107,9 +107,11 @@ mod tests {
     fn test_xml_with_declaration() {
         let input = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>";
         let result = convert(input).unwrap();
-        assert!(result
-            .markdown
-            .contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(
+            result
+                .markdown
+                .contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        );
     }
 
     #[test]

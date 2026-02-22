@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use crate::converter::ooxml_utils::{
-    resolve_image_placeholders, ImageInfo, PendingImageResolution,
+    ImageInfo, PendingImageResolution, resolve_image_placeholders,
 };
 use crate::converter::{
-    mime_from_image, ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
+    ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode, mime_from_image,
 };
 use crate::error::ConvertError;
 
@@ -241,11 +241,13 @@ mod tests {
         };
         let result = converter.convert(&PNG_HEADER, &options).unwrap();
         assert_eq!(result.markdown, "![](image.png)\n");
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.code == WarningCode::SkippedElement
-                && w.message.contains("image description failed")));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::SkippedElement
+                    && w.message.contains("image description failed"))
+        );
     }
 
     #[test]
@@ -280,10 +282,12 @@ mod tests {
         let result = converter.convert(&PNG_HEADER, &options).unwrap();
         assert_eq!(result.markdown, "");
         assert!(result.images.is_empty());
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.code == WarningCode::ResourceLimitReached));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::ResourceLimitReached)
+        );
     }
 
     #[test]

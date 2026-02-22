@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::converter::{
-    replace_image_alt_by_placeholder, ConversionWarning, ImageDescriber, WarningCode,
+    ConversionWarning, ImageDescriber, WarningCode, replace_image_alt_by_placeholder,
 };
 
 /// A resolved relationship entry from a .rels file.

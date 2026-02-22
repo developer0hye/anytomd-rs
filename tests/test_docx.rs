@@ -1,6 +1,6 @@
 mod common;
 
-use anytomd::{convert_file, ConversionOptions};
+use anytomd::{ConversionOptions, convert_file};
 use common::normalize;
 
 /// Content coverage test: verify key elements are present in the converted output.
@@ -22,9 +22,11 @@ fn test_docx_convert_file_sample() {
 
     // Body paragraphs
     assert!(result.markdown.contains("This is a simple paragraph."));
-    assert!(result
-        .markdown
-        .contains("Final paragraph with mixed content."));
+    assert!(
+        result
+            .markdown
+            .contains("Final paragraph with mixed content.")
+    );
 
     // Hyperlink
     assert!(result.markdown.contains("[Example](https://example.com)"));

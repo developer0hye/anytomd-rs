@@ -61,8 +61,8 @@ pub(crate) fn read_zip_bytes(
 mod tests {
     use super::*;
     use std::io::Write;
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     fn build_test_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
         let buf = Vec::new();

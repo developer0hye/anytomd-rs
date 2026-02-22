@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use calamine::{open_workbook_auto_from_rs, Data, Reader};
+use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use chrono::{Datelike, Timelike};
 use quick_xml::events::Event;
 use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
-    derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_path,
-    ImageInfo, PendingImageResolution,
+    ImageInfo, PendingImageResolution, derive_rels_path, parse_relationships,
+    resolve_image_placeholders, resolve_relative_path,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -428,8 +428,8 @@ mod tests {
     /// Build a minimal XLSX file in memory from the given sheet definitions.
     fn build_test_xlsx(sheets: &[(&str, &[&[TestCell]])]) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -982,8 +982,8 @@ mod tests {
         image_data: &[u8],
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
@@ -1261,11 +1261,13 @@ mod tests {
             result.markdown
         );
         // Should have a warning about the failure
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.code == WarningCode::SkippedElement
-                && w.message.contains("image description failed")));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::SkippedElement
+                    && w.message.contains("image description failed"))
+        );
     }
 
     #[test]
@@ -1288,10 +1290,12 @@ mod tests {
         // Image should not be extracted (exceeds budget)
         assert!(result.images.is_empty());
         // Should have a ResourceLimitReached warning
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.code == WarningCode::ResourceLimitReached));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::ResourceLimitReached)
+        );
     }
 
     // -- Helper function unit tests --
@@ -1376,8 +1380,8 @@ mod tests {
         image_data: &[u8],
     ) -> Vec<u8> {
         use std::io::Write;
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let mut zip = ZipWriter::new(Cursor::new(buf));
