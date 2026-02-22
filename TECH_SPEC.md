@@ -38,33 +38,33 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 
 ### 2.1 MarkItDown Feature Mapping
 
-| MarkItDown Feature | Python Library Used | anytomd Approach | Priority |
-|-------------------|--------------------|--------------------|----------|
-| **DOCX → MD** | `mammoth` (DOCX→HTML→MD) | `zip` + `quick-xml` (direct OOXML→MD) | P0 (MVP) |
-| **PPTX → MD** | `python-pptx` | `zip` + `quick-xml` (direct OOXML→MD) | P0 (MVP) |
-| **XLSX → MD** | `pandas` + `openpyxl` | `calamine` | P0 (MVP) |
-| **XLS → MD** | `xlrd` | `calamine` (supports legacy .xls) | P1 |
-| **PDF → MD** | `pdfminer.six` + `pdfplumber` | `pdf-extract` or `lopdf` | P1 |
-| **HTML → MD** | `BeautifulSoup` + custom markdownify | `scraper` + custom MD converter | P1 |
-| **CSV → MD** | Python `csv` module | `csv` crate | P0 (MVP) |
-| **JSON → MD** | built-in | `serde_json` (pretty-print as code block) | P0 (MVP) |
-| **XML → MD** | built-in | `quick-xml` (pretty-print as code block) | P1 |
-| **Plain Text → MD** | `read()` | `std::fs::read_to_string` (passthrough) | P0 (MVP) |
-| **Images** | `Pillow` + EXIF extraction | `kamadak-exif` (EXIF metadata only) | P2 |
-| **EPUB → MD** | `ebooklib` | `zip` + HTML converter (EPUB is XHTML in ZIP) | P2 |
-| **Outlook MSG → MD** | `olefile` | OLE2 parsing (complex, low priority) | P3 |
+| MarkItDown Feature | Python Library Used | anytomd Approach | Status |
+|-------------------|--------------------|--------------------|--------|
+| **DOCX → MD** | `mammoth` (DOCX→HTML→MD) | `zip` + `quick-xml` (direct OOXML→MD) | ✅ Shipped (v0.1.0) |
+| **PPTX → MD** | `python-pptx` | `zip` + `quick-xml` (direct OOXML→MD) | ✅ Shipped (v0.1.0) |
+| **XLSX → MD** | `pandas` + `openpyxl` | `calamine` | ✅ Shipped (v0.1.0) |
+| **XLS → MD** | `xlrd` | `calamine` (supports legacy .xls) | ✅ Shipped (v0.3.0) |
+| **PDF → MD** | `pdfminer.six` + `pdfplumber` | TBD (`pdf-extract` or `lopdf`) | Pending |
+| **HTML → MD** | `BeautifulSoup` + custom markdownify | `scraper` + custom MD converter | ✅ Shipped (v0.3.0) |
+| **CSV → MD** | Python `csv` module | `csv` crate | ✅ Shipped (v0.1.0) |
+| **JSON → MD** | built-in | `serde_json` (pretty-print as code block) | ✅ Shipped (v0.1.0) |
+| **XML → MD** | built-in | `quick-xml` (pretty-print as code block) | ✅ Shipped (v0.3.0) |
+| **Plain Text → MD** | `read()` | `std::fs::read_to_string` (passthrough) | ✅ Shipped (v0.1.0) |
+| **Images** | `Pillow` + EXIF extraction | EXIF metadata + optional LLM description | ✅ Shipped (v0.4.0) |
+| **EPUB → MD** | `ebooklib` | `zip` + HTML converter (EPUB is XHTML in ZIP) | Pending |
+| **Outlook MSG → MD** | `olefile` | OLE2 parsing (complex, low priority) | Pending |
 | **Audio → MD** | `pydub` + `SpeechRecognition` | Out of scope (LLM-dependent) | — |
 | **YouTube → MD** | `youtube-transcript-api` | Out of scope (cloud service) | — |
-| **ZIP → MD** | `zipfile` (recursive) | `zip` crate (recursive conversion) | P1 |
+| **ZIP → MD** | `zipfile` (recursive) | `zip` crate (recursive conversion) | Pending |
 
 ### 2.2 Priority Definitions
 
-| Priority | Meaning | Target |
+| Priority | Meaning | Status |
 |----------|---------|--------|
-| P0 | MVP — must ship in v0.1.0 | DOCX, PPTX, XLSX, CSV, JSON, Plain Text |
-| P1 | Core completeness — v0.2.0 | PDF, HTML, XLS, XML, ZIP |
-| P2 | Extended formats — v0.3.0 | Images (EXIF), EPUB |
-| P3 | Niche formats — future | Outlook MSG |
+| P0 | MVP | ✅ All shipped: DOCX, PPTX, XLSX, CSV, JSON, Plain Text |
+| P1 | Core completeness | ✅ Shipped: HTML, XLS, XML — Pending: PDF, ZIP |
+| P2 | Extended formats | ✅ Shipped: Images — Pending: EPUB |
+| P3 | Niche formats | Pending: Outlook MSG |
 
 ---
 
@@ -73,36 +73,42 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 ### 3.1 Crate Structure
 
 ```
-anytomd-rs/
-├── Cargo.toml
-├── src/
-│   ├── lib.rs              # Public API: convert(), detect_format()
-│   ├── converter/
-│   │   ├── mod.rs           # Converter trait definition
-│   │   ├── docx.rs          # DOCX → Markdown
-│   │   ├── pptx.rs          # PPTX → Markdown
-│   │   ├── xlsx.rs          # XLSX → Markdown
-│   │   ├── csv_conv.rs      # CSV → Markdown
-│   │   ├── json_conv.rs     # JSON → Markdown
-│   │   ├── plain_text.rs    # Plain text passthrough
-│   │   ├── pdf.rs           # PDF → Markdown (P1)
-│   │   ├── html.rs          # HTML → Markdown (P1)
-│   │   └── ...
-│   ├── markdown.rs          # Markdown generation utilities (tables, headings, lists)
-│   ├── detection.rs         # File format detection (extension + magic bytes)
-│   └── error.rs             # Error types
-│
-├── tests/                   # Integration tests with sample files
-│   ├── fixtures/            # Sample DOCX, PPTX, XLSX, etc.
-│   └── ...
-│
-└── examples/
-    └── convert.rs           # CLI-style example
+src/
+├── lib.rs              # Public API: convert_file(), convert_bytes(), async variants
+├── main.rs             # CLI binary (clap-based)
+├── error.rs            # ConvertError enum
+├── detection.rs        # File format detection (magic bytes + extension + ZIP introspection)
+├── markdown.rs         # Markdown generation utilities (tables, headings, lists)
+├── zip_utils.rs        # Shared ZIP reading helpers (crate-internal)
+└── converter/
+    ├── mod.rs           # Converter trait, ImageDescriber, AsyncImageDescriber, options, types
+    ├── docx.rs          # DOCX → Markdown
+    ├── pptx.rs          # PPTX → Markdown
+    ├── xlsx.rs          # XLSX/XLS → Markdown
+    ├── csv.rs           # CSV → Markdown
+    ├── json.rs          # JSON → Markdown
+    ├── xml.rs           # XML → Markdown
+    ├── html.rs          # HTML → Markdown
+    ├── plain_text.rs    # Plain text passthrough (with encoding detection)
+    ├── image.rs         # Image metadata extraction + optional LLM description
+    ├── gemini.rs        # GeminiDescriber (sync) + AsyncGeminiDescriber (async-gemini feature)
+    └── ooxml_utils.rs   # Shared OOXML helpers (image extraction, async placeholder resolution)
 ```
 
 ### 3.2 Core Trait
 
 ```rust
+use std::sync::Arc;
+
+pub trait ImageDescriber: Send + Sync {
+    fn describe(
+        &self,
+        image_bytes: &[u8],
+        mime_type: &str,
+        prompt: &str,
+    ) -> Result<String, ConvertError>;
+}
+
 pub enum WarningCode {
     SkippedElement,
     UnsupportedFeature,
@@ -123,6 +129,12 @@ pub struct ConversionOptions {
     pub max_total_image_bytes: usize,
     /// If true, return an error on recoverable parse failures
     pub strict: bool,
+    /// Maximum input file size in bytes. Files larger than this are rejected.
+    pub max_input_bytes: usize,
+    /// Maximum total uncompressed size of entries in a ZIP-based document.
+    pub max_uncompressed_zip_bytes: usize,
+    /// Optional image describer for LLM-based alt text generation.
+    pub image_describer: Option<Arc<dyn ImageDescriber>>,
 }
 
 pub struct ConversionResult {
@@ -152,6 +164,24 @@ pub trait Converter {
         options: &ConversionOptions,
     ) -> Result<ConversionResult, ConvertError>;
 }
+
+// Requires the `async` feature
+#[cfg(feature = "async")]
+pub trait AsyncImageDescriber: Send + Sync {
+    fn describe<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>;
+}
+
+// Requires the `async` feature
+#[cfg(feature = "async")]
+pub struct AsyncConversionOptions {
+    pub base: ConversionOptions,
+    pub async_image_describer: Option<Arc<dyn AsyncImageDescriber>>,
+}
 ```
 
 ### 3.3 Public API
@@ -164,6 +194,29 @@ println!("{}", result.markdown);
 // From bytes with explicit format
 let bytes = std::fs::read("document.docx")?;
 let result = anytomd::convert_bytes(&bytes, "docx", &ConversionOptions::default())?;
+
+// With LLM-based image description (sync)
+use anytomd::gemini::GeminiDescriber;
+let describer = GeminiDescriber::from_env()?;
+let options = ConversionOptions {
+    image_describer: Some(Arc::new(describer)),
+    ..Default::default()
+};
+let result = anytomd::convert_file("slides.pptx", &options)?;
+
+// Async image description (requires `async` + `async-gemini` features)
+#[cfg(feature = "async-gemini")]
+{
+    use anytomd::gemini::AsyncGeminiDescriber;
+    use anytomd::{AsyncConversionOptions, convert_file_async};
+
+    let describer = AsyncGeminiDescriber::from_env()?;
+    let options = AsyncConversionOptions {
+        async_image_describer: Some(Arc::new(describer)),
+        ..Default::default()
+    };
+    let result = convert_file_async("slides.pptx", &options).await?;
+}
 
 // Access extracted images
 for (filename, image_bytes) in &result.images {
@@ -336,15 +389,20 @@ Scanned PDFs (image-based) cannot be handled without OCR — this is explicitly 
 
 ### 4.9 LLM-Assisted Image Description
 
-Embedded images in DOCX/PPTX can optionally be described by an external LLM. This provides richer Markdown output (e.g., `![A bar chart showing Q3 revenue by region](image_1.png)`) instead of generic filenames.
+Embedded images in DOCX/PPTX/XLSX and standalone image files can optionally be described by an external LLM. This provides richer Markdown output (e.g., `![A bar chart showing Q3 revenue by region](image_1.png)`) instead of generic filenames.
 
 **Design: Trait-based injection**
 
-The library does NOT make HTTP calls or manage API keys itself. Instead, callers provide an implementation of the `ImageDescriber` trait:
+The library does NOT manage API keys itself. Callers provide an implementation of the `ImageDescriber` trait:
 
 ```rust
 pub trait ImageDescriber: Send + Sync {
-    fn describe(&self, image_bytes: &[u8], prompt: &str) -> Result<String, ConvertError>;
+    fn describe(
+        &self,
+        image_bytes: &[u8],
+        mime_type: &str,
+        prompt: &str,
+    ) -> Result<String, ConvertError>;
 }
 ```
 
@@ -354,34 +412,59 @@ This is passed via `ConversionOptions`:
 pub struct ConversionOptions {
     // ... existing fields ...
     /// Optional LLM-based image describer.
-    pub image_describer: Option<Box<dyn ImageDescriber>>,
+    pub image_describer: Option<Arc<dyn ImageDescriber>>,
+}
+```
+
+**Async support** (requires `async` feature):
+
+```rust
+pub trait AsyncImageDescriber: Send + Sync {
+    fn describe<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>;
+}
+
+pub struct AsyncConversionOptions {
+    pub base: ConversionOptions,
+    pub async_image_describer: Option<Arc<dyn AsyncImageDescriber>>,
 }
 ```
 
 **Behavior:**
-- If `image_describer` is `None` (default), images are referenced by filename only — no LLM call is made
-- If provided, the describer is called for each extracted image with the image bytes and a default prompt
-- If the describer returns an error, the image is still included with a generic filename and a warning is appended
+- If `image_describer` / `async_image_describer` is `None` (default), images are referenced by filename only — no LLM call is made
+- If provided, the describer is called for each extracted image with the image bytes, MIME type, and a default prompt
+- If the describer returns an error, the image is still included with a generic alt text and a warning is appended
 - The library is agnostic to which LLM provider is used — the trait works with any backend (Gemini, OpenAI, local models, etc.)
+- Async mode uses two-phase conversion: `convert_inner()` parses and collects image placeholders, then `resolve_image_placeholders_async()` resolves all descriptions concurrently via `futures_util::future::join_all`
 
-**Default LLM provider: Google Gemini**
+**Built-in LLM provider: Google Gemini**
 
-When building the built-in / example `ImageDescriber` implementation:
-- Use **Google Gemini** as the LLM provider
+The library ships with `GeminiDescriber` (sync, always available) and `AsyncGeminiDescriber` (behind `async-gemini` feature):
+
 - Default model: **`gemini-3-flash-preview`**
 - Always refer to the [official Gemini API documentation](https://ai.google.dev/gemini-api/docs) for the latest API specs, authentication methods, and model availability before implementing or updating Gemini-related code
 
 **API key management:**
 
-The `ImageDescriber` trait has no concept of API keys — credential handling is entirely the implementor's responsibility. The built-in `GeminiDescriber` example should follow this pattern:
+The `ImageDescriber` trait has no concept of API keys — credential handling is entirely the implementor's responsibility.
 
 ```rust
+// Sync (always available)
 impl GeminiDescriber {
-    /// Create with an explicit API key.
     pub fn new(api_key: String) -> Self { ... }
-
-    /// Create from the `GEMINI_API_KEY` environment variable.
     pub fn from_env() -> Result<Self, ConvertError> { ... }
+    pub fn with_model(self, model: String) -> Self { ... }
+}
+
+// Async (requires `async-gemini` feature)
+impl AsyncGeminiDescriber {
+    pub fn new(api_key: String) -> Self { ... }
+    pub fn from_env() -> Result<Self, ConvertError> { ... }
+    pub fn with_model(self, model: String) -> Self { ... }
 }
 ```
 
@@ -396,7 +479,7 @@ impl GeminiDescriber {
 | Production / library default | `gemini-3-flash-preview` | Best quality for real-world image description |
 | CI integration tests | `gemini-2.5-flash-lite` | Lowest cost; sufficient to verify API integration works end-to-end |
 
-The `GeminiDescriber` must support model override via builder style (for example, `GeminiDescriber::new(api_key).with_model(model_name.to_string())`) so that CI can use a different model without changing library defaults. CI tests should:
+The `GeminiDescriber` / `AsyncGeminiDescriber` support model override via builder style (e.g., `.with_model("gemini-2.5-flash-lite".to_string())`) so that CI can use a different model without changing library defaults. CI tests should:
 - Only assert that the API returns a non-empty string (LLM output is non-deterministic)
 - Be conditional on the `GEMINI_API_KEY` secret being available
 - Be marked as allowed-to-fail to avoid blocking merges on transient API errors
@@ -405,26 +488,46 @@ The `GeminiDescriber` must support model override via builder style (for example
 
 ## 5. Dependencies
 
-### 5.1 MVP (P0) Dependencies
+### 5.1 Core Dependencies
 
 ```toml
 [dependencies]
-zip = "2"              # ZIP archive reading (DOCX, PPTX)
-quick-xml = "0.37"     # XML parsing (OOXML)
-calamine = "0.26"      # XLSX/XLS reading
+zip = "2"              # ZIP archive reading (DOCX, PPTX, XLSX)
+quick-xml = "0.37"     # XML parsing (OOXML, XML converter)
+calamine = { version = "0.26", features = ["dates"] }  # XLSX/XLS reading
+chrono = { version = "0.4", default-features = false }  # Date formatting for spreadsheets
 csv = "1"              # CSV parsing
 serde_json = "1"       # JSON pretty-printing
+scraper = "0.22"       # HTML DOM parsing
+ego-tree = "0.10"      # Tree traversal (used with scraper)
+encoding_rs = "0.8"    # Non-UTF-8 encoding detection and conversion
+clap = { version = "4", features = ["derive"] }  # CLI argument parsing
 thiserror = "2"        # Error types
+ureq = "3"             # HTTP client (sync Gemini API calls)
+base64 = "0.22"        # Base64 encoding for Gemini image payloads
 ```
 
-### 5.2 P1 Dependencies (added later)
+### 5.2 Optional Dependencies (feature-gated)
 
 ```toml
-pdf-extract = "0.8"    # PDF text extraction
-scraper = "0.21"       # HTML DOM parsing
+futures-util = { version = "0.3", optional = true }  # async image resolution (async feature)
+reqwest = { version = "0.12", optional = true }       # async HTTP client (async-gemini feature)
 ```
 
-### 5.3 Design Principle: Minimal Dependencies
+### 5.3 Feature Flags
+
+| Feature | Dependencies | Description |
+|---------|-------------|-------------|
+| `async` | `futures-util` | `AsyncImageDescriber` trait, `AsyncConversionOptions`, `convert_file_async()`, `convert_bytes_async()` |
+| `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent Gemini API calls |
+
+### 5.4 Pending Dependencies (not yet added)
+
+| Crate | Format | Notes |
+|-------|--------|-------|
+| `pdf-extract` or `lopdf` | PDF | Will be added when PDF converter is implemented |
+
+### 5.5 Design Principle: Minimal Dependencies
 
 Every dependency must be **pure Rust** (no C bindings). This ensures:
 - `cargo build` works on all platforms without system library requirements
@@ -488,6 +591,9 @@ pub enum ConvertError {
     #[error("unsupported format: {extension}")]
     UnsupportedFormat { extension: String },
 
+    #[error("input too large: {size} bytes exceeds limit of {limit} bytes")]
+    InputTooLarge { size: usize, limit: usize },
+
     #[error("failed to read ZIP archive")]
     ZipError(#[from] zip::result::ZipError),
 
@@ -505,6 +611,9 @@ pub enum ConvertError {
 
     #[error("malformed document: {reason}")]
     MalformedDocument { reason: String },
+
+    #[error("image description failed: {reason}")]
+    ImageDescriptionError { reason: String },
 }
 ```
 
@@ -592,7 +701,8 @@ Gemini tests consume real API quota, so they are gated to prevent abuse from ext
 The owner must **review the PR diff before adding the `ci:gemini` label** — the label grants the PR's code access to the `GEMINI_API_KEY` secret.
 
 **Structure:**
-- Live tests live in `tests/test_gemini_live.rs` (or similar), gated behind the `gemini` feature
+- Gemini live tests currently reside as unit tests in `src/converter/gemini.rs` (gated by `GEMINI_API_KEY` env var at runtime, no feature flag required)
+- A dedicated `tests/test_gemini_live.rs` integration test file may be added in the future
 - Each test reads the `GEMINI_API_KEY` environment variable — if absent, the test is skipped (not failed)
 - Tests use model `gemini-2.5-flash-lite` to minimize API cost
 - Assertions check that the API returns a non-empty description string — they do NOT check the content (LLM output is non-deterministic)
@@ -610,7 +720,7 @@ fn test_gemini_live_describe_image() {
         }
     };
     let describer = GeminiDescriber::new(api_key).with_model("gemini-2.5-flash-lite".to_string());
-    let image_bytes = include_bytes!("fixtures/sample_image.png");
+    let image_bytes = include_bytes!("../tests/fixtures/sample_image.png");
     let result = describer.describe(image_bytes, "image/png", "Describe this image.");
     assert!(result.is_ok());
     assert!(!result.unwrap().is_empty());
@@ -621,41 +731,44 @@ fn test_gemini_live_describe_image() {
 
 ## 9. Milestones
 
-### v0.1.0 — MVP
-- [ ] Project setup (Cargo.toml, CI)
-- [ ] Converter trait + deterministic format detection (magic bytes first)
-- [ ] Conversion options + warning contract (`ConversionOptions`, `ConversionResult.warnings`)
-- [ ] DOCX converter (paragraphs, headings, hyperlinks; best-effort mode)
-- [ ] PPTX converter (slide titles + body text)
-- [ ] XLSX converter (multi-sheet, core cell types → Markdown tables)
-- [ ] CSV converter (→ Markdown table)
-- [ ] JSON converter (→ code block)
-- [ ] Plain text converter (passthrough)
-- [ ] Integration tests + normalized golden tests for all P0 formats
-- [ ] README with usage examples
-- [ ] Publish to crates.io
+### v0.1.0 — MVP ✅
+- [x] Project setup (Cargo.toml, CI)
+- [x] Converter trait + deterministic format detection (magic bytes first)
+- [x] Conversion options + warning contract (`ConversionOptions`, `ConversionResult.warnings`)
+- [x] DOCX converter (paragraphs, headings, hyperlinks; best-effort mode)
+- [x] PPTX converter (slide titles + body text)
+- [x] XLSX converter (multi-sheet, core cell types → Markdown tables)
+- [x] CSV converter (→ Markdown table)
+- [x] JSON converter (→ code block)
+- [x] Plain text converter (passthrough)
+- [x] Integration tests + normalized golden tests for all P0 formats
+- [x] README with usage examples
+- [x] Publish to crates.io
 
-### v0.2.0 — Core Completeness
-- [ ] DOCX advanced formatting (bold/italic/lists/tables/images)
-- [ ] PPTX advanced content (tables/speaker notes/images)
-- [ ] XLSX formula/date/error cell normalization
+### v0.2.0–v0.3.0 — Core Completeness ✅
+- [x] DOCX advanced formatting (bold/italic/lists/tables/images)
+- [x] PPTX advanced content (tables/speaker notes/images)
+- [x] XLSX formula/date/error cell normalization
+- [x] HTML converter (→ Markdown)
+- [x] XLS legacy format support (via calamine)
+- [x] XML converter (→ code block)
+- [x] Improved table formatting (column alignment, escaping)
+- [x] Encoding detection for non-UTF-8 files
+- [x] Resource-limit guards (max file size/uncompressed ZIP budget)
 - [ ] PDF converter (text extraction)
-- [ ] HTML converter (→ Markdown)
-- [ ] XLS legacy format support (via calamine)
-- [ ] XML converter (→ code block)
 - [ ] ZIP recursive conversion
-- [ ] Improved table formatting (column alignment, escaping)
-- [ ] Encoding detection for non-UTF-8 files
-- [ ] Resource-limit guards (max file size/page count/uncompressed ZIP budget)
 
-### v0.3.0 — Extended Formats
-- [ ] Image EXIF metadata extraction
-- [ ] EPUB converter
-- [ ] Markdown output normalization (consistent whitespace, line endings)
-- [ ] Optional CLI binary (`cargo install anytomd`)
+### v0.4.0–v0.6.0 — Images, LLM Integration, CLI ✅
+- [x] Image metadata extraction + optional LLM description
+- [x] `ImageDescriber` trait + `GeminiDescriber` (sync)
+- [x] `AsyncImageDescriber` trait + `AsyncGeminiDescriber` (async-gemini feature)
+- [x] `convert_file_async()` / `convert_bytes_async()` (async feature)
+- [x] CLI binary (`cargo install anytomd`)
 
 ### Future
-- [ ] `ImageDescriber` trait + Gemini-based example implementation
+- [ ] PDF converter
+- [ ] ZIP recursive conversion
+- [ ] EPUB converter
 - [ ] Outlook MSG support
 - [ ] WASM compilation target
 - [ ] Streaming conversion for large files
@@ -673,7 +786,7 @@ fn test_gemini_live_describe_image() {
 | DOCX approach | DOCX → HTML → MD (2 steps) | DOCX → MD directly (1 step) |
 | PDF approach | pdfminer + pdfplumber | pdf-extract (pure Rust) |
 | XLSX approach | pandas + openpyxl | calamine |
-| LLM features | Built-in (image caption, audio transcription) | Optional trait-based image description (Gemini default) |
+| LLM features | Built-in (image caption, audio transcription) | `ImageDescriber` trait with built-in `GeminiDescriber` (sync + async) |
 | Cloud integrations | Azure, YouTube, Wikipedia, Bing | None (pure local conversion) |
 | WASM support | No | Possible (P0 deps are all pure Rust) |
 | Cross-platform build | PyInstaller fragility | `cargo build` (no external runtime) |
