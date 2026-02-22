@@ -1,6 +1,11 @@
 use crate::converter::ImageDescriber;
 use crate::error::ConvertError;
 
+#[cfg(feature = "async-gemini")]
+use std::future::Future;
+#[cfg(feature = "async-gemini")]
+use std::pin::Pin;
+
 /// Built-in `ImageDescriber` that uses the Google Gemini API.
 ///
 /// Requires the `gemini` feature flag.
@@ -142,6 +147,121 @@ impl ImageDescriber for GeminiDescriber {
     }
 }
 
+/// Async built-in `AsyncImageDescriber` that uses the Google Gemini API via `reqwest`.
+///
+/// Requires the `async-gemini` feature flag.
+///
+/// # Example
+///
+/// ```no_run
+/// use anytomd::gemini::AsyncGeminiDescriber;
+///
+/// let describer = AsyncGeminiDescriber::new("your-api-key".to_string());
+/// // or from the GEMINI_API_KEY environment variable:
+/// let describer = AsyncGeminiDescriber::from_env().unwrap();
+/// ```
+#[cfg(feature = "async-gemini")]
+pub struct AsyncGeminiDescriber {
+    client: reqwest::Client,
+    api_key: String,
+    model: String,
+}
+
+#[cfg(feature = "async-gemini")]
+impl std::fmt::Debug for AsyncGeminiDescriber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncGeminiDescriber")
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .finish()
+    }
+}
+
+#[cfg(feature = "async-gemini")]
+impl AsyncGeminiDescriber {
+    /// Create a new `AsyncGeminiDescriber` with the given API key.
+    pub fn new(api_key: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_key,
+            model: "gemini-3-flash-preview".to_string(),
+        }
+    }
+
+    /// Create a new `AsyncGeminiDescriber` by reading the `GEMINI_API_KEY` environment variable.
+    pub fn from_env() -> Result<Self, ConvertError> {
+        let api_key =
+            std::env::var("GEMINI_API_KEY").map_err(|_| ConvertError::ImageDescriptionError {
+                reason: "GEMINI_API_KEY environment variable not set".to_string(),
+            })?;
+        Ok(Self::new(api_key))
+    }
+
+    /// Set a custom model name (default: `gemini-3-flash-preview`).
+    pub fn with_model(mut self, model: String) -> Self {
+        self.model = model;
+        self
+    }
+}
+
+#[cfg(feature = "async-gemini")]
+impl crate::converter::AsyncImageDescriber for AsyncGeminiDescriber {
+    fn describe<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>> {
+        Box::pin(async move {
+            use base64::Engine;
+
+            let encoded = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+
+            let request_body = serde_json::json!({
+                "contents": [{
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": encoded
+                            }
+                        },
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }]
+            });
+
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                self.model
+            );
+
+            let response = self
+                .client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", &self.api_key)
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| ConvertError::ImageDescriptionError {
+                    reason: format!("Gemini API request failed: {e}"),
+                })?;
+
+            let body = response
+                .text()
+                .await
+                .map_err(|e| ConvertError::ImageDescriptionError {
+                    reason: format!("failed to read Gemini response body: {e}"),
+                })?;
+
+            parse_response(&body)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +379,62 @@ mod tests {
         let json = r#"{"candidates": []}"#;
         let result = parse_response(json);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "async-gemini")]
+    mod async_gemini_tests {
+        use super::*;
+
+        #[test]
+        fn test_async_gemini_describer_new() {
+            let describer = AsyncGeminiDescriber::new("test-key".to_string());
+            assert_eq!(describer.api_key, "test-key");
+            assert_eq!(describer.model, "gemini-3-flash-preview");
+        }
+
+        #[test]
+        fn test_async_gemini_describer_with_model() {
+            let describer = AsyncGeminiDescriber::new("key".to_string())
+                .with_model("gemini-2.0-flash".to_string());
+            assert_eq!(describer.model, "gemini-2.0-flash");
+        }
+
+        #[test]
+        fn test_async_gemini_describer_from_env_missing_key() {
+            std::env::remove_var("GEMINI_API_KEY");
+            let result = AsyncGeminiDescriber::from_env();
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(
+                format!("{err}").contains("GEMINI_API_KEY"),
+                "error was: {err}"
+            );
+        }
+
+        #[test]
+        fn test_async_gemini_describer_from_env_with_key() {
+            std::env::set_var("GEMINI_API_KEY", "test-async-env-key");
+            let result = AsyncGeminiDescriber::from_env();
+            assert!(result.is_ok());
+            let describer = result.unwrap();
+            assert_eq!(describer.api_key, "test-async-env-key");
+            std::env::remove_var("GEMINI_API_KEY");
+        }
+
+        #[test]
+        fn test_async_gemini_describer_debug_redacts_key() {
+            let describer = AsyncGeminiDescriber::new("secret-key".to_string());
+            let debug = format!("{:?}", describer);
+            assert!(debug.contains("[REDACTED]"));
+            assert!(!debug.contains("secret-key"));
+        }
+
+        #[test]
+        fn test_async_gemini_describer_implements_trait() {
+            use crate::converter::AsyncImageDescriber;
+            let describer = AsyncGeminiDescriber::new("key".to_string());
+            // Verify it implements AsyncImageDescriber by using it as a trait object
+            let _: &dyn AsyncImageDescriber = &describer;
+        }
     }
 }
