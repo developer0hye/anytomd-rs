@@ -13,6 +13,9 @@ pub use error::ConvertError;
 
 pub mod gemini {
     pub use crate::converter::gemini::GeminiDescriber;
+
+    #[cfg(feature = "async-gemini")]
+    pub use crate::converter::gemini::AsyncGeminiDescriber;
 }
 
 use std::path::Path;
