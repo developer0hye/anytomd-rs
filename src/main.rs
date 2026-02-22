@@ -25,6 +25,10 @@ struct Cli {
     /// Treat recoverable errors as hard errors.
     #[arg(long)]
     strict: bool,
+
+    /// Output plain text instead of Markdown.
+    #[arg(long)]
+    plain_text: bool,
 }
 
 fn print_warnings(warnings: &[ConversionWarning]) {
@@ -55,8 +59,17 @@ fn build_options(cli: &Cli) -> ConversionOptions {
     options
 }
 
+fn extract_output(result: &anytomd::ConversionResult, plain_text: bool) -> String {
+    if plain_text {
+        result.plain_text()
+    } else {
+        result.markdown.clone()
+    }
+}
+
 fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
     let options = build_options(&cli);
+    let plain_text = cli.plain_text;
 
     let mut output_buf = String::new();
     let mut had_error = false;
@@ -77,7 +90,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
         match anytomd::convert_bytes(&data, fmt, &options) {
             Ok(result) => {
                 print_warnings(&result.warnings);
-                output_buf.push_str(&result.markdown);
+                output_buf.push_str(&extract_output(&result, plain_text));
             }
             Err(e) => {
                 eprintln!("error: stdin: {e}");
@@ -92,7 +105,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             if multiple && i > 0 {
                 output_buf.push('\n');
             }
-            if multiple {
+            if multiple && !plain_text {
                 output_buf.push_str(&format!("<!-- source: {} -->\n\n", path.display()));
             }
 
@@ -114,7 +127,7 @@ fn run(cli: Cli) -> Result<ExitCode, ExitCode> {
             match result {
                 Ok(result) => {
                     print_warnings(&result.warnings);
-                    output_buf.push_str(&result.markdown);
+                    output_buf.push_str(&extract_output(&result, plain_text));
                 }
                 Err(e) => {
                     eprintln!("error: {}: {e}", path.display());

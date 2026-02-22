@@ -119,6 +119,17 @@ pub struct ConversionResult {
     pub warnings: Vec<ConversionWarning>,
 }
 
+impl ConversionResult {
+    /// Returns the content as plain text with Markdown formatting removed.
+    ///
+    /// Headings, bold/italic markers, table syntax, code fences, list markers,
+    /// blockquote prefixes, links, and images are stripped. Code block content
+    /// is preserved as-is. Computed on demand — no extra memory stored.
+    pub fn plain_text(&self) -> String {
+        crate::markdown::strip_markdown(&self.markdown)
+    }
+}
+
 /// Decode raw bytes to a UTF-8 string, handling BOM detection and encoding fallback.
 ///
 /// Returns the decoded text and an optional warning if non-UTF-8 encoding was used.

@@ -148,6 +148,12 @@ pub struct ConversionResult {
     pub warnings: Vec<ConversionWarning>,
 }
 
+impl ConversionResult {
+    /// Returns the content as plain text with Markdown formatting removed.
+    /// Computed on demand via `strip_markdown()` — no extra storage.
+    pub fn plain_text(&self) -> String;
+}
+
 pub trait Converter {
     /// Returns supported file extensions (e.g., ["docx"])
     fn supported_extensions(&self) -> &[&str];
@@ -227,6 +233,10 @@ for (filename, image_bytes) in &result.images {
 for warning in &result.warnings {
     eprintln!("[{:?}] {}", warning.code, warning.message);
 }
+
+// Get plain text output (Markdown formatting stripped)
+let plain = result.plain_text();
+println!("{}", plain);
 ```
 
 ### 3.4 Package and Crate Naming
@@ -581,6 +591,26 @@ To prevent unbounded memory usage on large documents:
 - PPTX: Each slide title → `##`, slide number prepended
 - XLSX: Each sheet name → `##`
 
+### 6.5 Plain Text Output
+
+`ConversionResult::plain_text()` returns the Markdown content with all formatting stripped via `strip_markdown()`. This is a post-processing step — no converter changes are needed.
+
+**Stripping rules:**
+- Headings (`# text`): `#` prefix removed, text preserved
+- Bold/italic (`**text**`, `*text*`, `***text***`): markers removed
+- Tables: separator rows removed, data rows converted to tab-separated values with cell unescaping (`\|` → `|`, `\\` → `\`, `<br>` → newline)
+- Code blocks (`` ``` ``): fences removed, content preserved as-is (no inner stripping)
+- Lists (`- item`, `1. item`): markers removed, indentation preserved
+- Blockquotes (`> text`): `>` prefix removed
+- Links (`[text](url)`): URL removed, text preserved
+- Images (`![alt](url)`): URL removed, alt text preserved
+- Horizontal rules (`---`): removed
+- Checkboxes (`[x]`, `[ ]`): markers removed
+- Inline code (`` `code` ``): backticks removed
+- Consecutive blank lines: collapsed to at most one
+
+**Use cases:** full-text search indexing (Tantivy), LLM preprocessing, text analytics.
+
 ---
 
 ## 7. Error Handling
@@ -764,6 +794,12 @@ fn test_gemini_live_describe_image() {
 - [x] `AsyncImageDescriber` trait + `AsyncGeminiDescriber` (async-gemini feature)
 - [x] `convert_file_async()` / `convert_bytes_async()` (async feature)
 - [x] CLI binary (`cargo install anytomd`)
+
+### v0.7.0–v0.9.0 — Code, Plain Text, Notebooks, Plain Text Output ✅
+- [x] Code file converter (fenced blocks with language detection)
+- [x] Plain text file converter (encoding detection)
+- [x] Jupyter Notebook converter
+- [x] Plain text output via `ConversionResult::plain_text()` and CLI `--plain-text`
 
 ### Future
 - [ ] PDF converter
