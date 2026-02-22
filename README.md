@@ -37,6 +37,19 @@ Format is auto-detected from magic bytes and file extension. ZIP-based formats (
 cargo add anytomd
 ```
 
+### Feature Flags
+
+| Feature | Dependencies | Description |
+|---------|-------------|-------------|
+| *(default)* | — | Sync API only |
+| `async` | `futures-util` | Async API (`convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` trait) |
+| `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent image descriptions via Gemini |
+
+```sh
+# Async image descriptions with Gemini
+cargo add anytomd --features async-gemini
+```
+
 ## CLI
 
 ### Install
@@ -148,6 +161,32 @@ impl ImageDescriber for MyDescriber {
 }
 ```
 
+### Async Image Descriptions
+
+For documents with many images, the async API resolves all descriptions concurrently. Requires the `async` feature (or `async-gemini` for the built-in Gemini describer).
+
+```rust
+use std::sync::Arc;
+use anytomd::{convert_file_async, AsyncConversionOptions, AsyncImageDescriber, ConvertError};
+use anytomd::gemini::AsyncGeminiDescriber;  // requires `async-gemini` feature
+
+#[tokio::main]
+async fn main() {
+    let describer = AsyncGeminiDescriber::from_env().unwrap();
+
+    let options = AsyncConversionOptions {
+        async_image_describer: Some(Arc::new(describer)),
+        ..Default::default()
+    };
+
+    let result = convert_file_async("presentation.pptx", &options).await.unwrap();
+    println!("{}", result.markdown);
+    // All images described concurrently — significant speedup for multi-image documents
+}
+```
+
+The library has no `tokio` dependency — the caller provides the async runtime. Any runtime (`tokio`, `async-std`, etc.) works.
+
 ## API
 
 ### `convert_file`
@@ -169,6 +208,32 @@ pub fn convert_bytes(
     data: &[u8],
     extension: &str,
     options: &ConversionOptions,
+) -> Result<ConversionResult, ConvertError>
+```
+
+### `convert_file_async`
+
+Requires the `async` feature.
+
+```rust
+/// Convert a file at the given path to Markdown with async image description.
+/// If an async_image_describer is set, all image descriptions are resolved concurrently.
+pub async fn convert_file_async(
+    path: impl AsRef<Path>,
+    options: &AsyncConversionOptions,
+) -> Result<ConversionResult, ConvertError>
+```
+
+### `convert_bytes_async`
+
+Requires the `async` feature.
+
+```rust
+/// Convert raw bytes to Markdown with async image description.
+pub async fn convert_bytes_async(
+    data: &[u8],
+    extension: &str,
+    options: &AsyncConversionOptions,
 ) -> Result<ConversionResult, ConvertError>
 ```
 
