@@ -4,6 +4,7 @@ pub mod docx;
 pub mod gemini;
 pub mod html;
 pub mod image;
+pub mod ipynb;
 pub mod json;
 pub(crate) mod ooxml_utils;
 pub mod plain_text;

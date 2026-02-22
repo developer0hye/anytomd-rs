@@ -80,6 +80,7 @@ pub fn convert_bytes(
     use converter::docx::DocxConverter;
     use converter::html::HtmlConverter;
     use converter::image::ImageConverter;
+    use converter::ipynb::IpynbConverter;
     use converter::json::JsonConverter;
     use converter::plain_text::PlainTextConverter;
     use converter::pptx::PptxConverter;
@@ -98,6 +99,7 @@ pub fn convert_bytes(
         Box::new(DocxConverter),
         Box::new(PptxConverter),
         Box::new(XlsxConverter),
+        Box::new(IpynbConverter),
         Box::new(JsonConverter),
         Box::new(XmlConverter),
         Box::new(CsvConverter),
