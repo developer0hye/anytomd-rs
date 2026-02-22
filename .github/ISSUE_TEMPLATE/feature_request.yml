@@ -1,0 +1,55 @@
+name: Feature Request
+description: Suggest a new feature or improvement for anytomd
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe what you'd like to see added or improved.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: "What problem does this feature solve? Why is it needed?"
+      placeholder: "I'm trying to convert X format but..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: "Describe the feature or change you'd like."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: "Have you considered any alternative approaches?"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New converter (file format support)
+        - Existing converter improvement
+        - API / public interface
+        - Performance
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: "Any other context — examples, references, related issues, etc."
+    validations:
+      required: false
