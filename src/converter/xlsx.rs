@@ -8,7 +8,7 @@ use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
     derive_rels_path, parse_relationships, resolve_image_placeholders, resolve_relative_path,
-    ImageInfo,
+    ImageInfo, PendingImageResolution,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -228,16 +228,18 @@ fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning
     }
 }
 
-impl Converter for XlsxConverter {
-    fn supported_extensions(&self) -> &[&str] {
-        &["xlsx", "xls"]
-    }
+// ---- Internal conversion (parse + image extraction, no resolution) ----
 
-    fn convert(
+impl XlsxConverter {
+    /// Parse the workbook and extract images without resolving placeholders.
+    ///
+    /// Returns the conversion result (with unresolved placeholders in markdown)
+    /// and pending image data for later resolution (sync or async).
+    pub(crate) fn convert_inner(
         &self,
         data: &[u8],
         options: &ConversionOptions,
-    ) -> Result<ConversionResult, ConvertError> {
+    ) -> Result<(ConversionResult, PendingImageResolution), ConvertError> {
         // Pre-scan ZIP budget before passing to calamine
         if let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(data)) {
             crate::zip_utils::validate_zip_budget(
@@ -343,9 +345,7 @@ impl Converter for XlsxConverter {
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
                         }
-                        if options.image_describer.is_some() {
-                            image_bytes_map.insert(filename, img_data);
-                        }
+                        image_bytes_map.insert(filename, img_data);
                     } else {
                         warnings.push(ConversionWarning {
                             code: WarningCode::ResourceLimitReached,
@@ -364,22 +364,45 @@ impl Converter for XlsxConverter {
             }
         }
 
-        // Replace placeholders with descriptions (if describer) or original alt text
-        let mut markdown = sections.join("\n");
-        resolve_image_placeholders(
-            &mut markdown,
-            &image_infos,
-            &image_bytes_map,
-            options.image_describer.as_deref(),
-            &mut warnings,
-        );
+        let markdown = sections.join("\n");
 
-        Ok(ConversionResult {
+        let result = ConversionResult {
             markdown,
             images,
             warnings,
             ..Default::default()
-        })
+        };
+
+        let pending = PendingImageResolution {
+            infos: image_infos,
+            bytes: image_bytes_map,
+        };
+
+        Ok((result, pending))
+    }
+}
+
+// ---- Converter trait impl ----
+
+impl Converter for XlsxConverter {
+    fn supported_extensions(&self) -> &[&str] {
+        &["xlsx", "xls"]
+    }
+
+    fn convert(
+        &self,
+        data: &[u8],
+        options: &ConversionOptions,
+    ) -> Result<ConversionResult, ConvertError> {
+        let (mut result, pending) = self.convert_inner(data, options)?;
+        resolve_image_placeholders(
+            &mut result.markdown,
+            &pending.infos,
+            &pending.bytes,
+            options.image_describer.as_deref(),
+            &mut result.warnings,
+        );
+        Ok(result)
     }
 }
 
