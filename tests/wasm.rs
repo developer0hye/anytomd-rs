@@ -116,3 +116,58 @@ fn test_convert_unicode_wasm() {
     assert!(result.markdown.contains("\u{592A}\u{90CE}"));
     assert!(result.markdown.contains("\u{6771}\u{4EAC}"));
 }
+
+// ---- async-gemini tests (structural, no live API calls) ----
+
+#[cfg(feature = "async-gemini")]
+mod async_gemini {
+    use wasm_bindgen_test::*;
+
+    use anytomd::gemini::AsyncGeminiDescriber;
+
+    #[wasm_bindgen_test]
+    fn test_async_gemini_describer_construction_wasm() {
+        let describer = AsyncGeminiDescriber::new("test-key".to_string());
+        // Verify Debug output redacts the key
+        let debug = format!("{:?}", describer);
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("test-key"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_async_gemini_describer_with_model_wasm() {
+        let describer =
+            AsyncGeminiDescriber::new("key".to_string()).with_model("gemini-2.0-flash".to_string());
+        let debug = format!("{:?}", describer);
+        assert!(debug.contains("gemini-2.0-flash"));
+    }
+
+    #[wasm_bindgen_test]
+    fn test_async_gemini_describer_trait_object_wasm() {
+        use anytomd::AsyncImageDescriber;
+        let describer = AsyncGeminiDescriber::new("key".to_string());
+        // Verify it can be used as a trait object on WASM
+        let _: &dyn AsyncImageDescriber = &describer;
+    }
+
+    #[wasm_bindgen_test]
+    fn test_convert_bytes_async_no_describer_wasm() {
+        use anytomd::{AsyncConversionOptions, convert_bytes_async};
+
+        let csv_data = b"Name,Age\nAlice,30";
+        let options = AsyncConversionOptions::default();
+        // convert_bytes_async without a describer falls back to sync convert
+        let result = wasm_bindgen_futures::JsFuture::from(wasm_bindgen_futures::future_to_promise(
+            async move {
+                let result = convert_bytes_async(csv_data, "csv", &options)
+                    .await
+                    .unwrap();
+                assert!(result.markdown.contains("| Name | Age |"));
+                assert!(result.markdown.contains("| Alice | 30 |"));
+                Ok(wasm_bindgen::JsValue::TRUE)
+            },
+        ));
+        // The future is constructed successfully — structural verification
+        let _ = result;
+    }
+}

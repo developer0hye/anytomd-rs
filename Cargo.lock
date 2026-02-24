@@ -97,6 +97,7 @@ dependencies = [
  "tokio",
  "ureq",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "zip",
 ]

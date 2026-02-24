@@ -96,8 +96,15 @@ jobs:
       - name: Clippy (wasm)
         run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
 
+      - name: Check (wasm + async-gemini)
+        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini
+
+      - name: Clippy (wasm + async-gemini)
+        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini -- -D warnings
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Run WASM tests
         run: wasm-pack test --node --no-default-features --features wasm
+

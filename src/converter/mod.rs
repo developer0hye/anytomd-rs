@@ -259,6 +259,21 @@ pub(crate) fn replace_image_alt_by_placeholder(
     }
 }
 
+/// Async description future type for native targets.
+///
+/// Native async describers return `Send` futures so they can be scheduled on
+/// multithreaded executors.
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
+pub type AsyncDescribeFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>;
+
+/// Async description future type for WASM targets.
+///
+/// On WASM, futures backed by browser APIs are often not `Send`, so the async
+/// image describer future omits the `Send` bound.
+#[cfg(all(feature = "async", target_arch = "wasm32"))]
+pub type AsyncDescribeFuture<'a> = Pin<Box<dyn Future<Output = Result<String, ConvertError>> + 'a>>;
+
 /// Async trait for generating image descriptions using an LLM or other backend.
 ///
 /// This is the async counterpart of [`ImageDescriber`]. It uses
@@ -266,7 +281,7 @@ pub(crate) fn replace_image_alt_by_placeholder(
 /// dyn-safe).
 ///
 /// Requires the `async` feature.
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", not(target_arch = "wasm32")))]
 pub trait AsyncImageDescriber: Send + Sync {
     /// Describe the given image asynchronously.
     ///
@@ -278,7 +293,30 @@ pub trait AsyncImageDescriber: Send + Sync {
         image_bytes: &'a [u8],
         mime_type: &'a str,
         prompt: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>>;
+    ) -> AsyncDescribeFuture<'a>;
+}
+
+/// Async trait for generating image descriptions using an LLM or other backend.
+///
+/// This is the async counterpart of [`ImageDescriber`]. It uses
+/// `Pin<Box<dyn Future>>` for dyn-compatibility (async fn in traits is not
+/// dyn-safe).
+///
+/// On WASM targets this trait does not require `Send + Sync`, and the returned
+/// future also omits `Send`.
+#[cfg(all(feature = "async", target_arch = "wasm32"))]
+pub trait AsyncImageDescriber {
+    /// Describe the given image asynchronously.
+    ///
+    /// - `image_bytes`: raw image data (PNG, JPEG, etc.)
+    /// - `mime_type`: MIME type of the image (e.g., `"image/png"`)
+    /// - `prompt`: instruction for the LLM (e.g., "Describe this image concisely")
+    fn describe<'a>(
+        &'a self,
+        image_bytes: &'a [u8],
+        mime_type: &'a str,
+        prompt: &'a str,
+    ) -> AsyncDescribeFuture<'a>;
 }
 
 /// Conversion options for the async API.

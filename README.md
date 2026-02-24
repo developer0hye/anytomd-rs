@@ -130,7 +130,8 @@ cargo add anytomd
 | *(default)* | `async-gemini` | Async API + `AsyncGeminiDescriber` — all async features enabled out of the box |
 | `async` | `futures-util` | Async API (`convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` trait) |
 | `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent image descriptions via Gemini |
-| `wasm` | `wasm-bindgen`, `js-sys` | WebAssembly bindings (`convertBytes`, `convertBytesWithOptions`) for browser/edge use |
+| `wasm` | `wasm-bindgen`, `js-sys`, `wasm-bindgen-futures` | WebAssembly bindings (`convertBytes`, `convertBytesWithOptions`) for browser/edge use |
+| `wasm` + `async-gemini` | *(combined)* | Adds `convertBytesWithGemini` for async Gemini-powered conversion in WASM |
 
 Async features are included by default. To opt out:
 
@@ -145,7 +146,11 @@ anytomd compiles to `wasm32-unknown-unknown`, enabling client-side document conv
 ### Build
 
 ```sh
+# Basic WASM build (sync conversion only)
 wasm-pack build --target web --no-default-features --features wasm
+
+# With Gemini async image descriptions
+wasm-pack build --target web --no-default-features --features wasm,async-gemini
 ```
 
 ### Usage from JavaScript
@@ -165,6 +170,21 @@ console.log(result.title);       // string or null
 console.log(result.warnings);    // string[]
 ```
 
+#### With Gemini Image Descriptions (requires `wasm` + `async-gemini` features)
+
+```js
+import init, { convertBytesWithGemini } from './pkg/anytomd.js';
+
+await init();
+
+const response = await fetch('presentation.pptx');
+const bytes = new Uint8Array(await response.arrayBuffer());
+
+// Images are described concurrently via the Gemini API
+const result = await convertBytesWithGemini(bytes, 'pptx', 'your-gemini-api-key');
+console.log(result.markdown);  // images have LLM-generated alt text
+```
+
 ### WASM API Availability
 
 | API | Native | WASM |
@@ -173,7 +193,7 @@ console.log(result.warnings);    // string[]
 | `convert_bytes_async` | Yes | Yes |
 | `convert_file` / `convert_file_async` | Yes | No (no filesystem) |
 | `GeminiDescriber` (sync) | Yes | No (uses `ureq`) |
-| `AsyncGeminiDescriber` | Yes | Not yet (Phase 2) |
+| `AsyncGeminiDescriber` / `convertBytesWithGemini` | Yes | Yes (`wasm` + `async-gemini`) |
 
 All 12 format converters work on WASM via `convert_bytes`.
 

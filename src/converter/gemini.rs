@@ -8,11 +8,6 @@ use crate::converter::ImageDescriber;
 #[cfg(any(not(target_arch = "wasm32"), feature = "async-gemini"))]
 use crate::error::ConvertError;
 
-#[cfg(feature = "async-gemini")]
-use std::future::Future;
-#[cfg(feature = "async-gemini")]
-use std::pin::Pin;
-
 /// Built-in `ImageDescriber` that uses the Google Gemini API.
 ///
 /// Available on native targets only (not WASM). For the async variant,
@@ -225,7 +220,7 @@ impl crate::converter::AsyncImageDescriber for AsyncGeminiDescriber {
         image_bytes: &'a [u8],
         mime_type: &'a str,
         prompt: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, ConvertError>> + Send + 'a>> {
+    ) -> crate::converter::AsyncDescribeFuture<'a> {
         Box::pin(async move {
             use base64::Engine;
 

@@ -174,7 +174,7 @@ anytomd compiles to `wasm32-unknown-unknown` for client-side document conversion
 | `convert_bytes` / `convert_bytes_async` | Yes | Yes |
 | `convert_file` / `convert_file_async` | Yes | No (no filesystem) |
 | `GeminiDescriber` (sync, uses `ureq`) | Yes | No |
-| `AsyncGeminiDescriber` (uses `reqwest`) | Yes | Not yet |
+| `AsyncGeminiDescriber` / `convertBytesWithGemini` | Yes | Yes (`wasm` + `async-gemini`) |
 | JS bindings (`convertBytes`) | No | Yes (`wasm` feature) |
 
 ### WASM-Critical Dependency Rules

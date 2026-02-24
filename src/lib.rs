@@ -53,6 +53,7 @@
 //! | `async` | Async API: `convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` |
 //! | `async-gemini` | `AsyncGeminiDescriber` for concurrent Gemini API calls |
 //! | `wasm` | WebAssembly bindings via `wasm-bindgen` (`convertBytes`, `convertBytesWithOptions`) |
+//! | `wasm` + `async-gemini` | Adds `convertBytesWithGemini` for async Gemini-powered conversion in WASM |
 
 pub mod converter;
 pub mod detection;

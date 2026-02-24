@@ -496,7 +496,7 @@ mod tests {
 
     // ---- Async resolve tests (require tokio dev-dependency) ----
 
-    #[cfg(feature = "async")]
+    #[cfg(all(feature = "async", not(target_arch = "wasm32")))]
     mod async_tests {
         use super::*;
         use crate::converter::AsyncImageDescriber;
