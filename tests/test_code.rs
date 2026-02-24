@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 mod common;
 
 use anytomd::{ConversionOptions, convert_bytes, convert_file};

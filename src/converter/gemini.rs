@@ -1,9 +1,11 @@
 //! Google Gemini image description providers.
 //!
-//! Contains [`GeminiDescriber`] (sync, always available) and
+//! Contains `GeminiDescriber` (sync, native-only — not available on WASM) and
 //! `AsyncGeminiDescriber` (behind the `async-gemini` feature).
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::converter::ImageDescriber;
+#[cfg(any(not(target_arch = "wasm32"), feature = "async-gemini"))]
 use crate::error::ConvertError;
 
 #[cfg(feature = "async-gemini")]
@@ -13,7 +15,7 @@ use std::pin::Pin;
 
 /// Built-in `ImageDescriber` that uses the Google Gemini API.
 ///
-/// Always available (no feature flag required). For the async variant,
+/// Available on native targets only (not WASM). For the async variant,
 /// see `AsyncGeminiDescriber` (requires the `async-gemini` feature).
 ///
 /// # Example
@@ -25,11 +27,13 @@ use std::pin::Pin;
 /// // or from the GEMINI_API_KEY environment variable:
 /// let describer = GeminiDescriber::from_env().unwrap();
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub struct GeminiDescriber {
     api_key: String,
     model: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for GeminiDescriber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GeminiDescriber")
@@ -39,6 +43,7 @@ impl std::fmt::Debug for GeminiDescriber {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GeminiDescriber {
     /// Create a new `GeminiDescriber` with the given API key.
     pub fn new(api_key: String) -> Self {
@@ -67,6 +72,8 @@ impl GeminiDescriber {
 /// Parse the text response from a Gemini `generateContent` JSON response body.
 ///
 /// Extracts `candidates[0].content.parts[0].text`.
+/// Used by both sync `GeminiDescriber` (native) and `AsyncGeminiDescriber` (async-gemini).
+#[cfg(any(not(target_arch = "wasm32"), feature = "async-gemini"))]
 fn parse_response(body: &str) -> Result<String, ConvertError> {
     let value: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ConvertError::ImageDescriptionError {
@@ -101,6 +108,7 @@ fn parse_response(body: &str) -> Result<String, ConvertError> {
     Ok(text.trim().to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ImageDescriber for GeminiDescriber {
     fn describe(
         &self,
@@ -269,20 +277,26 @@ impl crate::converter::AsyncImageDescriber for AsyncGeminiDescriber {
 }
 
 #[cfg(test)]
+#[cfg(any(not(target_arch = "wasm32"), feature = "async-gemini"))]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::Mutex;
 
     /// Serializes tests that mutate the `GEMINI_API_KEY` environment variable
     /// to prevent race conditions when tests run in parallel.
+    #[cfg(not(target_arch = "wasm32"))]
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn set_env_key(value: &str) {
         // SAFETY: All callers are inside `with_env_key`, which holds `ENV_MUTEX`,
         // serializing process environment mutation for this test module.
         unsafe { std::env::set_var("GEMINI_API_KEY", value) };
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn remove_env_key() {
         // SAFETY: All callers are inside `with_env_key`, which holds `ENV_MUTEX`,
         // serializing process environment mutation for this test module.
@@ -290,6 +304,7 @@ mod tests {
     }
 
     /// Saves the current `GEMINI_API_KEY` value, runs the closure, then restores it.
+    #[cfg(not(target_arch = "wasm32"))]
     fn with_env_key<F: FnOnce()>(f: F) {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let original = std::env::var("GEMINI_API_KEY").ok();
@@ -300,6 +315,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_gemini_describer_new() {
         let describer = GeminiDescriber::new("test-key".to_string());
@@ -307,6 +323,7 @@ mod tests {
         assert_eq!(describer.model, "gemini-3-flash-preview");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_gemini_describer_with_model() {
         let describer =
@@ -314,6 +331,7 @@ mod tests {
         assert_eq!(describer.model, "gemini-2.0-flash");
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_gemini_describer_from_env_missing_key() {
         with_env_key(|| {
@@ -328,6 +346,7 @@ mod tests {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_gemini_describer_from_env_with_key() {
         with_env_key(|| {
@@ -437,6 +456,7 @@ mod tests {
 
         #[test]
         fn test_async_gemini_describer_from_env_missing_key() {
+            #[cfg(not(target_arch = "wasm32"))]
             super::with_env_key(|| {
                 super::remove_env_key();
                 let result = AsyncGeminiDescriber::from_env();
@@ -451,6 +471,7 @@ mod tests {
 
         #[test]
         fn test_async_gemini_describer_from_env_with_key() {
+            #[cfg(not(target_arch = "wasm32"))]
             super::with_env_key(|| {
                 super::set_env_key("test-async-env-key");
                 let result = AsyncGeminiDescriber::from_env();

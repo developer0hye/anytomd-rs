@@ -163,6 +163,53 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 
 ---
 
+## WebAssembly (WASM) Support
+
+anytomd compiles to `wasm32-unknown-unknown` for client-side document conversion in browsers and edge runtimes.
+
+### Architecture — Native vs WASM
+
+| API | Native | WASM |
+|-----|--------|------|
+| `convert_bytes` / `convert_bytes_async` | Yes | Yes |
+| `convert_file` / `convert_file_async` | Yes | No (no filesystem) |
+| `GeminiDescriber` (sync, uses `ureq`) | Yes | No |
+| `AsyncGeminiDescriber` (uses `reqwest`) | Yes | Not yet |
+| JS bindings (`convertBytes`) | No | Yes (`wasm` feature) |
+
+### WASM-Critical Dependency Rules
+
+- `zip` crate uses `default-features = false, features = ["deflate"]` — default features pull in C-binding codecs (`zstd-sys`, `lzma-sys`) that break WASM
+- `ureq` and `clap` are behind `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
+- Native-only dev-deps (`assert_cmd`, `tempfile`, `tokio`) are behind `[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]`
+- **New dependencies must be verified for `wasm32-unknown-unknown` compatibility before merging** — run `cargo check --lib --target wasm32-unknown-unknown --no-default-features`
+
+### Build & Test Commands
+
+```bash
+# WASM compilation checks
+cargo check --lib --target wasm32-unknown-unknown --no-default-features
+cargo check --lib --target wasm32-unknown-unknown --no-default-features --features wasm
+cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
+
+# WASM tests (requires wasm-pack)
+wasm-pack test --node --no-default-features --features wasm
+
+# Build WASM package for distribution
+wasm-pack build --target web --no-default-features --features wasm
+```
+
+### CI WASM Checks
+
+The `wasm` job in CI runs on every push/PR:
+- `cargo check` with no features, `async`, and `wasm` features
+- `cargo clippy` for WASM target
+- `wasm-pack test` for integration tests
+
+All checks use `--no-default-features` because the default `async-gemini` feature pulls in `reqwest` with `rustls-tls` which cannot compile for WASM.
+
+---
+
 ## Code Conventions
 
 ### Rust Style
