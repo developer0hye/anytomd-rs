@@ -1,6 +1,6 @@
 [package]
 name = "anytomd"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ categories = ["parser-implementations", "text-processing"]
 exclude = ["examples/"]
 
 [features]
-default = []
+default = ["async-gemini"]
 async = ["dep:futures-util"]
 async-gemini = ["async", "dep:reqwest"]
 

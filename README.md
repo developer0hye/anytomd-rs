@@ -43,13 +43,14 @@ cargo add anytomd
 
 | Feature | Dependencies | Description |
 |---------|-------------|-------------|
-| *(default)* | — | Sync API only |
+| *(default)* | `async-gemini` | Async API + `AsyncGeminiDescriber` — all async features enabled out of the box |
 | `async` | `futures-util` | Async API (`convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` trait) |
 | `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent image descriptions via Gemini |
 
-```sh
-# Async image descriptions with Gemini
-cargo add anytomd --features async-gemini
+Async features are included by default. To opt out:
+
+```toml
+anytomd = { version = "0.11", default-features = false }
 ```
 
 ## CLI
@@ -187,12 +188,12 @@ impl ImageDescriber for MyDescriber {
 
 ### Async Image Descriptions
 
-For documents with many images, the async API resolves all descriptions concurrently. Requires the `async` feature (or `async-gemini` for the built-in Gemini describer).
+For documents with many images, the async API resolves all descriptions concurrently. Included by default since v0.11.0.
 
 ```rust
 use std::sync::Arc;
 use anytomd::{convert_file_async, AsyncConversionOptions, AsyncImageDescriber, ConvertError};
-use anytomd::gemini::AsyncGeminiDescriber;  // requires `async-gemini` feature
+use anytomd::gemini::AsyncGeminiDescriber;
 
 #[tokio::main]
 async fn main() {
@@ -237,7 +238,7 @@ pub fn convert_bytes(
 
 ### `convert_file_async`
 
-Requires the `async` feature.
+Included by default (requires the `async` feature if default features are disabled).
 
 ```rust
 /// Convert a file at the given path to Markdown with async image description.
@@ -250,7 +251,7 @@ pub async fn convert_file_async(
 
 ### `convert_bytes_async`
 
-Requires the `async` feature.
+Included by default (requires the `async` feature if default features are disabled).
 
 ```rust
 /// Convert raw bytes to Markdown with async image description.
