@@ -29,7 +29,7 @@ A pure Rust tool and library that converts various document formats into Markdow
 | Code | `.py`, `.rs`, `.js`, `.ts`, `.c`, `.cpp`, `.go`, `.java`, `.rb`, `.swift`, `.sh`, ... | Fenced code blocks with language identifier |
 | Plain Text | `.txt`, `.md`, `.rst`, `.log`, `.toml`, `.yaml`, `.ini`, etc. | Passthrough with encoding detection (UTF-8, UTF-16, Windows-1252) |
 
-**Note on PDF:** PDF conversion is intentionally out of scope. Gemini, ChatGPT, and Claude already provide native PDF support (with plan/model-specific limits), so anytomd focuses on formats that still benefit from dedicated Markdown conversion.
+**Note on PDF:** PDF conversion is intentionally out of scope. Gemini, ChatGPT, and Claude already provide native PDF support (with plan/model-specific limits), so anytomd focuses on formats that still benefit from dedicated Markdown conversion. Attempting to convert a PDF will return a descriptive `FormatNotSupported` error.
 
 Format is auto-detected from magic bytes and file extension. ZIP-based formats (DOCX/PPTX/XLSX) are distinguished by inspecting internal archive structure.
 

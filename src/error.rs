@@ -4,6 +4,9 @@ pub enum ConvertError {
     #[error("unsupported format: {extension}")]
     UnsupportedFormat { extension: String },
 
+    #[error("{extension}: {reason}")]
+    FormatNotSupported { extension: String, reason: String },
+
     #[error("input too large: {size} bytes exceeds limit of {limit} bytes")]
     InputTooLarge { size: usize, limit: usize },
 

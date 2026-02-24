@@ -44,7 +44,7 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 | **PPTX → MD** | `python-pptx` | `zip` + `quick-xml` (direct OOXML→MD) | ✅ Shipped (v0.1.0) |
 | **XLSX → MD** | `pandas` + `openpyxl` | `calamine` | ✅ Shipped (v0.1.0) |
 | **XLS → MD** | `xlrd` | `calamine` (supports legacy .xls) | ✅ Shipped (v0.3.0) |
-| **PDF → MD** | `pdfminer.six` + `pdfplumber` | TBD (`pdf-extract` or `lopdf`) | Pending |
+| **PDF → MD** | `pdfminer.six` + `pdfplumber` | Deferred — LLMs handle PDF natively | Deferred |
 | **HTML → MD** | `BeautifulSoup` + custom markdownify | `scraper` + custom MD converter | ✅ Shipped (v0.3.0) |
 | **CSV → MD** | Python `csv` module | `csv` crate | ✅ Shipped (v0.1.0) |
 | **JSON → MD** | built-in | `serde_json` (pretty-print as code block) | ✅ Shipped (v0.1.0) |
@@ -62,7 +62,7 @@ MarkItDown is a widely-used Python library for converting documents to Markdown,
 | Priority | Meaning | Status |
 |----------|---------|--------|
 | P0 | MVP | ✅ All shipped: DOCX, PPTX, XLSX, CSV, JSON, Plain Text |
-| P1 | Core completeness | ✅ Shipped: HTML, XLS, XML — Pending: PDF, ZIP |
+| P1 | Core completeness | ✅ Shipped: HTML, XLS, XML — Pending: ZIP — Deferred: PDF |
 | P2 | Extended formats | ✅ Shipped: Images — Pending: EPUB |
 | P3 | Niche formats | Pending: Outlook MSG |
 
@@ -372,7 +372,9 @@ fn convert_xlsx(data: &[u8]) -> Result<ConversionResult> {
 // Detect encoding if not UTF-8 (optional: `encoding_rs` crate)
 ```
 
-### 4.7 PDF (P1)
+### 4.7 PDF (Deferred)
+
+> **Status: Intentionally deferred.** Gemini, ChatGPT, and Claude handle PDF natively (with plan/model-specific limits). Attempting to convert a PDF returns a descriptive `FormatNotSupported` error. This section is retained for historical context.
 
 PDF text extraction is significantly harder than OOXML. Options:
 
@@ -380,8 +382,6 @@ PDF text extraction is significantly harder than OOXML. Options:
 |-------|----------|------|------|
 | `pdf-extract` | Extracts text with layout inference | Good text quality | Larger dependency |
 | `lopdf` | Low-level PDF parsing | Lightweight | Manual text extraction |
-
-**Decision: Start with `pdf-extract` for P1.** If quality or maintenance becomes an issue, fall back to `lopdf` with custom text extraction. C-binding options are out of scope.
 
 Scanned PDFs (image-based) cannot be handled without OCR — this is explicitly out of scope. The consuming application should use Gemini/GPT vision for scanned documents.
 
@@ -531,7 +531,7 @@ reqwest = { version = "0.12", optional = true }       # async HTTP client (async
 
 | Crate | Format | Notes |
 |-------|--------|-------|
-| `pdf-extract` or `lopdf` | PDF | Will be added when PDF converter is implemented |
+| *(none currently)* | — | PDF is deferred (LLMs handle natively) |
 
 ### 5.5 Design Principle: Minimal Dependencies
 
@@ -618,6 +618,9 @@ To prevent unbounded memory usage on large documents:
 pub enum ConvertError {
     #[error("unsupported format: {extension}")]
     UnsupportedFormat { extension: String },
+
+    #[error("{extension}: {reason}")]
+    FormatNotSupported { extension: String, reason: String },
 
     #[error("input too large: {size} bytes exceeds limit of {limit} bytes")]
     InputTooLarge { size: usize, limit: usize },
@@ -783,7 +786,7 @@ fn test_gemini_live_describe_image() {
 - [x] Improved table formatting (column alignment, escaping)
 - [x] Encoding detection for non-UTF-8 files
 - [x] Resource-limit guards (max file size/uncompressed ZIP budget)
-- [ ] PDF converter (text extraction)
+- [ ] ~~PDF converter~~ (deferred — LLMs handle PDF natively)
 - [ ] ZIP recursive conversion
 
 ### v0.4.0–v0.6.0 — Images, LLM Integration, CLI ✅
@@ -800,7 +803,6 @@ fn test_gemini_live_describe_image() {
 - [x] Plain text output via `ConversionResult.plain_text` field (direct extraction) and CLI `--plain-text`
 
 ### Future
-- [ ] PDF converter
 - [ ] ZIP recursive conversion
 - [ ] EPUB converter
 - [ ] Outlook MSG support
@@ -818,7 +820,7 @@ fn test_gemini_live_describe_image() {
 | Install | `pip install markitdown` | `cargo add anytomd` |
 | Binary size impact | ~50MB (PyInstaller) | Single-digit MB (target/profile dependent) |
 | DOCX approach | DOCX → HTML → MD (2 steps) | DOCX → MD directly (1 step) |
-| PDF approach | pdfminer + pdfplumber | pdf-extract (pure Rust) |
+| PDF approach | pdfminer + pdfplumber | Deferred (LLMs handle PDF natively) |
 | XLSX approach | pandas + openpyxl | calamine |
 | LLM features | Built-in (image caption, audio transcription) | `ImageDescriber` trait with built-in `GeminiDescriber` (sync + async) |
 | Cloud integrations | Azure, YouTube, Wikipedia, Bing | None (pure local conversion) |

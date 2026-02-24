@@ -75,6 +75,15 @@ pub fn convert_bytes(
         });
     }
 
+    if extension == "pdf" {
+        return Err(ConvertError::FormatNotSupported {
+            extension: "pdf".to_string(),
+            reason: "PDF is intentionally unsupported — Gemini, ChatGPT, and Claude \
+                     handle PDF natively"
+                .to_string(),
+        });
+    }
+
     use converter::code::CodeConverter;
     use converter::csv::CsvConverter;
     use converter::docx::DocxConverter;
@@ -180,6 +189,15 @@ pub async fn convert_bytes_async(
         return Err(ConvertError::InputTooLarge {
             size: data.len(),
             limit: options.base.max_input_bytes,
+        });
+    }
+
+    if extension == "pdf" {
+        return Err(ConvertError::FormatNotSupported {
+            extension: "pdf".to_string(),
+            reason: "PDF is intentionally unsupported — Gemini, ChatGPT, and Claude \
+                     handle PDF natively"
+                .to_string(),
         });
     }
 
@@ -341,5 +359,42 @@ mod tests {
             format!("{err}").contains("input too large"),
             "error was: {err}"
         );
+    }
+
+    #[test]
+    fn test_convert_bytes_pdf_returns_descriptive_error() {
+        let data = b"%PDF-1.7 fake pdf content";
+        let options = ConversionOptions::default();
+        let result = convert_bytes(data, "pdf", &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("pdf"), "error should mention pdf: {msg}");
+        assert!(
+            msg.contains("intentionally unsupported"),
+            "error should explain why: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_convert_file_pdf_returns_descriptive_error() {
+        // Create a temp file with .pdf extension and PDF magic bytes
+        let dir = std::env::temp_dir().join("anytomd_test_pdf_error");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("test.pdf");
+        std::fs::write(&file_path, b"%PDF-1.7 fake").unwrap();
+
+        let options = ConversionOptions::default();
+        let result = convert_file(&file_path, &options);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("intentionally unsupported"),
+            "error should explain why: {msg}"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
