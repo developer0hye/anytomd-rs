@@ -172,6 +172,13 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 - Conversion should be **best-effort**: if a single element (e.g., one corrupted table) fails to parse, skip it and continue — do not fail the entire document
 - Best-effort behavior must be observable: append structured warnings to `ConversionResult.warnings` instead of silently dropping parse failures
 
+### Rustdoc
+- The crate has `#![warn(missing_docs)]` enabled — all new public items (modules, structs, traits, enums, functions, fields) **MUST** have `///` or `//!` doc comments
+- When adding a new converter, include: module-level `//!` doc explaining the format and approach, and a `///` doc on the converter struct
+- When adding new public types or enum variants, add per-item `///` docs
+- Feature-gated items (behind `async`, `async-gemini`): use backtick-quoted names instead of `[`link`]` syntax in doc comments to avoid unresolved link warnings
+- After adding new public items, verify with `cargo doc --no-deps 2>&1 | grep warning` — must produce zero warnings
+
 ### Crate Structure
 - `src/lib.rs` — public API (`convert_file`, `convert_bytes`)
 - `src/converter/` — one module per format (`docx.rs`, `pptx.rs`, `xlsx.rs`, ...)
@@ -222,7 +229,7 @@ Optional Docker setup for reproducible Linux builds. Native `cargo` is the prima
 cargo build && cargo test && cargo clippy -- -D warnings
 ```
 
-After completing a full converter, also run `cargo fmt --check` and `cargo build --release`.
+After completing a full converter or adding new public items, also run `cargo fmt --check`, `cargo build --release`, and `cargo doc --no-deps` (verify zero warnings).
 
 **Non-negotiable:** Do NOT proceed if any step fails — fix first, re-run, then continue. Never delete/ignore/weaken tests to pass the loop.
 
