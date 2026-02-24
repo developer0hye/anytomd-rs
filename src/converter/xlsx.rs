@@ -344,6 +344,7 @@ impl XlsxConverter {
                 let sheet_images = extract_sheet_images(&mut archive, sheet_idx);
 
                 let mut image_lines = Vec::new();
+                let mut plain_image_lines = Vec::new();
                 for (filename, img_data) in sheet_images {
                     total_image_bytes += img_data.len();
                     if total_image_bytes <= options.max_total_image_bytes {
@@ -355,6 +356,7 @@ impl XlsxConverter {
                             filename: filename.clone(),
                         });
                         image_lines.push(format!("![{placeholder}]({filename})"));
+                        plain_image_lines.push(placeholder);
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
                         }
@@ -373,6 +375,8 @@ impl XlsxConverter {
 
                 if !image_lines.is_empty() {
                     sections[section_idx].push_str(&format!("\n{}", image_lines.join("\n")));
+                    plain_sections[section_idx]
+                        .push_str(&format!("\n{}", plain_image_lines.join("\n")));
                 }
             }
         }
@@ -1626,6 +1630,65 @@ mod tests {
                 .contains("![A chart from openpyxl](image1.png)"),
             "markdown was: {}",
             result.markdown
+        );
+    }
+
+    #[test]
+    fn test_xlsx_plain_text_contains_image_placeholder() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            extract_images: true,
+            ..Default::default()
+        };
+        // Use convert_inner to inspect pre-resolution state
+        let (result, _pending) = converter.convert_inner(&data, &options).unwrap();
+        // plain_text should contain the placeholder (before resolution)
+        assert!(
+            result.plain_text.contains("__img_0__"),
+            "plain_text should contain the image placeholder, was: {}",
+            result.plain_text
+        );
+        // plain_text should NOT contain image markdown syntax
+        assert!(
+            !result.plain_text.contains("!["),
+            "plain_text should not contain ![ image syntax, was: {}",
+            result.plain_text
+        );
+    }
+
+    #[test]
+    fn test_xlsx_image_describer_updates_plain_text() {
+        use TestCell::*;
+        let data = build_test_xlsx_with_image(
+            &[("Sheet1", &[&[Str("Name")][..], &[Str("Alice")]])],
+            "image1.png",
+            b"fake-png-data",
+        );
+        let converter = XlsxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "A bar chart".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        // plain_text should contain the description
+        assert!(
+            result.plain_text.contains("A bar chart"),
+            "plain_text should contain the image description, was: {}",
+            result.plain_text
+        );
+        // plain_text should NOT contain image markdown syntax
+        assert!(
+            !result.plain_text.contains("!["),
+            "plain_text should not contain ![ image syntax, was: {}",
+            result.plain_text
         );
     }
 }

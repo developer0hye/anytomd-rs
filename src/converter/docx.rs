@@ -389,6 +389,10 @@ fn parse_document(
     let mut current_row: Vec<String> = Vec::new();
     let mut current_cell_text = String::new();
     let mut cell_paragraph_count: usize = 0;
+    // Plain-text table state (no markdown formatting in cells)
+    let mut table_rows_plain: Vec<Vec<String>> = Vec::new();
+    let mut current_row_plain: Vec<String> = Vec::new();
+    let mut current_cell_text_plain = String::new();
 
     // Drawing/Image state
     let mut in_drawing = false;
@@ -411,14 +415,17 @@ fn parse_document(
                     "tbl" if in_body => {
                         in_table = true;
                         table_rows.clear();
+                        table_rows_plain.clear();
                     }
                     "tr" if in_table => {
                         in_table_row = true;
                         current_row.clear();
+                        current_row_plain.clear();
                     }
                     "tc" if in_table_row => {
                         in_table_cell = true;
                         current_cell_text.clear();
+                        current_cell_text_plain.clear();
                         cell_paragraph_count = 0;
                     }
                     "p" if in_body => {
@@ -654,22 +661,35 @@ fn parse_document(
                             let table_md = build_table(&headers, &data_rows);
                             output.push_str(&table_md);
                             output.push('\n');
-                            let table_plain = build_table_plain(&headers, &data_rows);
+                            // Use plain-text rows (no markdown formatting) for plain output
+                            let first_row_plain = &table_rows_plain[0];
+                            let headers_plain: Vec<&str> =
+                                first_row_plain.iter().map(|s| s.as_str()).collect();
+                            let data_rows_plain: Vec<Vec<&str>> = table_rows_plain[1..]
+                                .iter()
+                                .map(|row| row.iter().map(|s| s.as_str()).collect())
+                                .collect();
+                            let table_plain = build_table_plain(&headers_plain, &data_rows_plain);
                             plain_output.push_str(&table_plain);
                             plain_output.push('\n');
                         }
                         in_table = false;
                         table_rows.clear();
+                        table_rows_plain.clear();
                         last_was_list = false;
                     }
                     "tr" if in_table_row => {
                         table_rows.push(current_row.clone());
                         current_row.clear();
+                        table_rows_plain.push(current_row_plain.clone());
+                        current_row_plain.clear();
                         in_table_row = false;
                     }
                     "tc" if in_table_cell => {
                         current_row.push(current_cell_text.trim().to_string());
                         current_cell_text.clear();
+                        current_row_plain.push(current_cell_text_plain.trim().to_string());
+                        current_cell_text_plain.clear();
                         in_table_cell = false;
                     }
                     "p" if in_paragraph => {
@@ -695,6 +715,10 @@ fn parse_document(
                                 current_cell_text.push(' ');
                             }
                             current_cell_text.push_str(current_para_text.trim());
+                            if cell_paragraph_count > 0 && !current_para_text_plain.is_empty() {
+                                current_cell_text_plain.push(' ');
+                            }
+                            current_cell_text_plain.push_str(current_para_text_plain.trim());
                             cell_paragraph_count += 1;
                         } else {
                             // Normal paragraph finalization
@@ -916,7 +940,7 @@ fn finalize_paragraph(
             plain_output.push_str(trimmed_plain);
             plain_output.push_str("\n\n");
             if *level == 1 && title.is_none() {
-                *title = Some(trimmed.to_string());
+                *title = Some(trimmed_plain.to_string());
             }
         }
         ParagraphKind::ListItem {
@@ -2448,5 +2472,114 @@ mod tests {
         );
         assert!(result.plain_text.contains("Item 1"));
         assert!(result.plain_text.contains("Item 2"));
+    }
+
+    #[test]
+    fn test_docx_plain_text_table_bold_cells_no_formatting() {
+        // Table with bold text in cells — plain_text should not contain **
+        let body = r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Bold Cell</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Normal</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // Markdown should have bold markers
+        assert!(
+            result.markdown.contains("**Bold Cell**"),
+            "markdown should contain bold markers, was: {}",
+            result.markdown
+        );
+        // Plain text should NOT have bold markers
+        assert!(
+            !result.plain_text.contains("**"),
+            "plain_text should not contain ** markers, was: {}",
+            result.plain_text
+        );
+        assert!(
+            result.plain_text.contains("Bold Cell"),
+            "plain_text should contain the cell text"
+        );
+    }
+
+    #[test]
+    fn test_docx_plain_text_table_hyperlink_cells_no_markdown() {
+        // Table with hyperlinked text in cells — plain_text should not contain [](url)
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>"#;
+        let body = r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:hyperlink r:id="rId1"><w:r><w:t>Click Here</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, Some(rels));
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        // Markdown should have link syntax
+        assert!(
+            result
+                .markdown
+                .contains("[Click Here](https://example.com)"),
+            "markdown should contain link syntax, was: {}",
+            result.markdown
+        );
+        // Plain text should NOT have link syntax
+        assert!(
+            !result.plain_text.contains('['),
+            "plain_text should not contain [ from link syntax, was: {}",
+            result.plain_text
+        );
+        assert!(
+            !result.plain_text.contains("https://example.com"),
+            "plain_text should not contain URL, was: {}",
+            result.plain_text
+        );
+        assert!(
+            result.plain_text.contains("Click Here"),
+            "plain_text should contain the link text"
+        );
+    }
+
+    #[test]
+    fn test_docx_title_no_markdown_formatting() {
+        // Heading 1 with bold text — title should be plain text, no **
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Bold Title</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert_eq!(
+            result.title.as_deref(),
+            Some("Bold Title"),
+            "title should not contain markdown bold markers, was: {:?}",
+            result.title
+        );
+        assert!(
+            !result.title.as_deref().unwrap_or("").contains("**"),
+            "title must not contain ** markers"
+        );
+    }
+
+    #[test]
+    fn test_docx_title_hyperlink_no_markdown_syntax() {
+        // Heading 1 with a hyperlink — title should be plain text, no [](url)
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:hyperlink r:id="rId1"><w:r><w:t>Linked Title</w:t></w:r></w:hyperlink></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, Some(rels));
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert_eq!(
+            result.title.as_deref(),
+            Some("Linked Title"),
+            "title should not contain markdown link syntax, was: {:?}",
+            result.title
+        );
+        assert!(
+            !result.title.as_deref().unwrap_or("").contains('['),
+            "title must not contain [ from link syntax"
+        );
     }
 }
