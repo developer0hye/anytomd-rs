@@ -267,4 +267,135 @@ mod tests {
         assert!(result.markdown.contains("Montr\u{00e9}al"));
         assert!(!result.warnings.is_empty());
     }
+
+    #[test]
+    fn test_csv_multiline_quoted_field() {
+        let converter = CsvConverter;
+        let input = b"Name,Bio\nAlice,\"Line one\nLine two\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // Newline inside quoted field should become <br> in markdown table
+        assert!(
+            result.markdown.contains("Line one<br>Line two"),
+            "multiline cell should use <br>, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_escaped_quotes_in_field() {
+        let converter = CsvConverter;
+        // RFC 4180: doubled quotes inside quoted field
+        let input = b"Name,Quote\nAlice,\"She said \"\"hello\"\"\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("She said \"hello\""),
+            "escaped quotes should be unescaped, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_multiline_with_unicode() {
+        let converter = CsvConverter;
+        let input = "Name,Note\n홍길동,\"첫째 줄\n둘째 줄 🎉\"\n".as_bytes();
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.markdown.contains("홍길동"));
+        assert!(
+            result.markdown.contains("첫째 줄<br>둘째 줄 🎉"),
+            "CJK + emoji multiline should work, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_crlf_in_quoted_field() {
+        let converter = CsvConverter;
+        let input = b"A,B\nX,\"line1\r\nline2\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        assert!(
+            result.markdown.contains("line1<br>line2"),
+            "CRLF in quoted field should become <br>, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_pipe_and_newline_combined() {
+        let converter = CsvConverter;
+        let input = b"Cmd,Output\ntest,\"echo | grep\nhello\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // Pipe should be escaped AND newline should become <br>
+        assert!(
+            result.markdown.contains("\\|"),
+            "pipe should be escaped, got: {}",
+            result.markdown
+        );
+        assert!(
+            result.markdown.contains("<br>"),
+            "newline should become <br>, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_backslash_in_quoted_field() {
+        let converter = CsvConverter;
+        let input = b"Path,Value\nroot,\"C:\\Users\\test\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // Backslashes should be escaped in markdown table
+        assert!(
+            result.markdown.contains("C:\\\\Users\\\\test"),
+            "backslashes should be escaped, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_empty_quoted_field() {
+        let converter = CsvConverter;
+        let input = b"A,B,C\n1,\"\",3\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // Empty quoted field should render as empty cell
+        assert!(
+            result.markdown.contains("| 1 |  | 3 |"),
+            "empty quoted field should be empty cell, got: {}",
+            result.markdown
+        );
+    }
+
+    #[test]
+    fn test_csv_plain_text_multiline_preserved() {
+        let converter = CsvConverter;
+        let input = b"Name,Bio\nAlice,\"Line one\nLine two\"\n";
+        let result = converter
+            .convert(input, &ConversionOptions::default())
+            .unwrap();
+        // In plain text, multiline cells appear with tab-separated columns
+        assert!(result.plain_text.contains("Name\tBio"));
+        assert!(
+            result.plain_text.contains("Alice\t"),
+            "plain text should have tab-separated cells, got: {}",
+            result.plain_text
+        );
+        // The cell content includes the original newline in plain text
+        assert!(
+            result.plain_text.contains("Line one") && result.plain_text.contains("Line two"),
+            "multiline content should be present in plain text, got: {}",
+            result.plain_text
+        );
+    }
 }

@@ -50,3 +50,68 @@ fn test_xls_convert_bytes_direct() {
     assert!(result.markdown.contains("| Alpha | Beta | Gamma | Delta |"));
     assert!(result.markdown.contains("| ColA | ColB | ColC | ColD |"));
 }
+
+/// Integration test: XLS with Korean/CJK Unicode content preserved.
+/// Fixture: sample_unicode.xls Sheet1 has Korean names and CJK city names.
+#[test]
+fn test_xls_unicode_cjk_content() {
+    let result = convert_file(
+        "tests/fixtures/sample_unicode.xls",
+        &ConversionOptions::default(),
+    )
+    .unwrap();
+    // Korean names
+    assert!(result.markdown.contains("홍길동"));
+    assert!(result.markdown.contains("김다영"));
+    // Japanese name
+    assert!(result.markdown.contains("田中太郎"));
+    // CJK city names
+    assert!(result.markdown.contains("서울"));
+    assert!(result.markdown.contains("東京"));
+    assert!(result.markdown.contains("北京"));
+    // Table structure preserved
+    assert!(result.markdown.contains("| Name | Age | City |"));
+}
+
+/// Integration test: XLS with emoji content preserved.
+/// Fixture: sample_unicode.xls Sheet2 has emoji in product names and notes.
+#[test]
+fn test_xls_emoji_content() {
+    let result = convert_file(
+        "tests/fixtures/sample_unicode.xls",
+        &ConversionOptions::default(),
+    )
+    .unwrap();
+    // Emoji in product names
+    assert!(result.markdown.contains("🚀 Rocket Launch"));
+    assert!(result.markdown.contains("🎉 Party Pack"));
+    assert!(result.markdown.contains("📚 Book Set"));
+    // Emoji in notes
+    assert!(result.markdown.contains("Special offer ✨"));
+    assert!(result.markdown.contains("한국어 포함 🇰🇷"));
+    // Empty cell (Party Pack has no note)
+    assert!(result.markdown.contains("| 🎉 Party Pack | 24.5 |  |"));
+}
+
+/// Golden test: compare normalized Unicode XLS output against expected file.
+#[test]
+fn test_xls_golden_unicode() {
+    let result = convert_file(
+        "tests/fixtures/sample_unicode.xls",
+        &ConversionOptions::default(),
+    )
+    .unwrap();
+    let expected = include_str!("fixtures/expected/sample_unicode.xls.md");
+    assert_eq!(normalize(&result.markdown), normalize(expected));
+}
+
+/// Integration test: convert_bytes with Unicode XLS content.
+#[test]
+fn test_xls_convert_bytes_unicode() {
+    let data = std::fs::read("tests/fixtures/sample_unicode.xls").unwrap();
+    let result = anytomd::convert_bytes(&data, "xls", &ConversionOptions::default()).unwrap();
+    assert!(result.markdown.contains("## Sheet1"));
+    assert!(result.markdown.contains("홍길동"));
+    assert!(result.markdown.contains("## Sheet2"));
+    assert!(result.markdown.contains("🚀 Rocket Launch"));
+}
