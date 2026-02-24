@@ -135,7 +135,7 @@ cargo add anytomd
 Async features are included by default. To opt out:
 
 ```toml
-anytomd = { version = "0.11", default-features = false }
+anytomd = { version = "1", default-features = false }
 ```
 
 ## WebAssembly (WASM)
