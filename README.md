@@ -130,12 +130,52 @@ cargo add anytomd
 | *(default)* | `async-gemini` | Async API + `AsyncGeminiDescriber` — all async features enabled out of the box |
 | `async` | `futures-util` | Async API (`convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` trait) |
 | `async-gemini` | `async` + `reqwest` | `AsyncGeminiDescriber` for concurrent image descriptions via Gemini |
+| `wasm` | `wasm-bindgen`, `js-sys` | WebAssembly bindings (`convertBytes`, `convertBytesWithOptions`) for browser/edge use |
 
 Async features are included by default. To opt out:
 
 ```toml
 anytomd = { version = "0.11", default-features = false }
 ```
+
+## WebAssembly (WASM)
+
+anytomd compiles to `wasm32-unknown-unknown`, enabling client-side document conversion in browsers, Cloudflare Workers, Deno Deploy, and other edge runtimes. Documents never leave the user's device.
+
+### Build
+
+```sh
+wasm-pack build --target web --no-default-features --features wasm
+```
+
+### Usage from JavaScript
+
+```js
+import init, { convertBytes } from './pkg/anytomd.js';
+
+await init();
+
+const response = await fetch('document.docx');
+const bytes = new Uint8Array(await response.arrayBuffer());
+
+const result = convertBytes(bytes, 'docx');
+console.log(result.markdown);
+console.log(result.plainText);
+console.log(result.title);       // string or null
+console.log(result.warnings);    // string[]
+```
+
+### WASM API Availability
+
+| API | Native | WASM |
+|-----|--------|------|
+| `convert_bytes` / `convertBytes` | Yes | Yes |
+| `convert_bytes_async` | Yes | Yes |
+| `convert_file` / `convert_file_async` | Yes | No (no filesystem) |
+| `GeminiDescriber` (sync) | Yes | No (uses `ureq`) |
+| `AsyncGeminiDescriber` | Yes | Not yet (Phase 2) |
+
+All 12 format converters work on WASM via `convert_bytes`.
 
 ## CLI
 

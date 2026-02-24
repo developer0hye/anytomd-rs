@@ -24,17 +24,26 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! use anytomd::{convert_file, convert_bytes, ConversionOptions};
-//!
-//! // Convert a file (format auto-detected from extension and magic bytes)
-//! let options = ConversionOptions::default();
-//! let result = convert_file("document.docx", &options).unwrap();
-//! println!("{}", result.markdown);
+//! use anytomd::{convert_bytes, ConversionOptions};
 //!
 //! // Convert raw bytes with an explicit format
+//! let options = ConversionOptions::default();
 //! let csv_data = b"Name,Age\nAlice,30\nBob,25";
 //! let result = convert_bytes(csv_data, "csv", &options).unwrap();
 //! println!("{}", result.markdown);
+//! ```
+//!
+//! On native targets, file-based conversion is also available:
+//!
+//! ```no_run
+//! # #[cfg(not(target_arch = "wasm32"))]
+//! # {
+//! use anytomd::{convert_file, ConversionOptions};
+//!
+//! let options = ConversionOptions::default();
+//! let result = convert_file("document.docx", &options).unwrap();
+//! println!("{}", result.markdown);
+//! # }
 //! ```
 //!
 //! # Feature Flags
@@ -43,6 +52,7 @@
 //! |---------|-------------|
 //! | `async` | Async API: `convert_file_async`, `convert_bytes_async`, `AsyncImageDescriber` |
 //! | `async-gemini` | `AsyncGeminiDescriber` for concurrent Gemini API calls |
+//! | `wasm` | WebAssembly bindings via `wasm-bindgen` (`convertBytes`, `convertBytesWithOptions`) |
 
 pub mod converter;
 pub mod detection;
@@ -59,20 +69,28 @@ pub use error::ConvertError;
 
 /// Built-in Google Gemini image description providers.
 ///
-/// Contains `GeminiDescriber` (sync, always available)
+/// Contains `GeminiDescriber` (sync, native-only — not available on WASM)
 /// and `AsyncGeminiDescriber` (behind the `async-gemini` feature).
 pub mod gemini {
+    #[cfg(not(target_arch = "wasm32"))]
     pub use crate::converter::gemini::GeminiDescriber;
 
     #[cfg(feature = "async-gemini")]
     pub use crate::converter::gemini::AsyncGeminiDescriber;
 }
 
+#[cfg(feature = "wasm")]
+mod wasm;
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// Convert a file at the given path to Markdown.
 ///
 /// The format is auto-detected from magic bytes and file extension.
+///
+/// Not available on WASM targets — use [`convert_bytes`] instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn convert_file(
     path: impl AsRef<Path>,
     options: &ConversionOptions,
@@ -184,8 +202,10 @@ pub fn convert_bytes(
 /// If an `async_image_describer` is set, all image descriptions are resolved
 /// concurrently. The caller provides the async runtime.
 ///
-/// Requires the `async` feature.
+/// Requires the `async` feature. Not available on WASM targets — use
+/// [`convert_bytes_async`] instead.
 #[cfg(feature = "async")]
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn convert_file_async(
     path: impl AsRef<Path>,
     options: &converter::AsyncConversionOptions,
@@ -357,6 +377,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_convert_file_non_ooxml_zip_returns_unsupported() {
         // Create a minimal valid ZIP file that is NOT an OOXML format
@@ -390,6 +411,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_convert_file_input_too_large() {
         // Use existing sample.csv fixture with a tiny limit
@@ -426,6 +448,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_convert_file_pdf_returns_descriptive_error() {
         // Create a temp file with .pdf extension and PDF magic bytes

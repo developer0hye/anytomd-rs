@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use anytomd::{ConversionOptions, convert_bytes, convert_file};
 
 fn opts() -> ConversionOptions {

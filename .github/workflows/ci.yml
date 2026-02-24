@@ -70,3 +70,34 @@ jobs:
 
       - name: CLI smoke test
         run: echo "hello" | cargo run -- --format txt
+
+  wasm:
+    name: WASM Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check (no default features)
+        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features
+
+      - name: Check (async feature)
+        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features async
+
+      - name: Check (wasm feature)
+        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features wasm
+
+      - name: Clippy (wasm)
+        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Run WASM tests
+        run: wasm-pack test --node --no-default-features --features wasm

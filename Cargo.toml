@@ -17,9 +17,10 @@ exclude = ["examples/"]
 default = ["async-gemini"]
 async = ["dep:futures-util"]
 async-gemini = ["async", "dep:reqwest"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [dependencies]
-zip = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = "0.37"
 calamine = { version = "0.26", features = ["dates"] }
 chrono = { version = "0.4", default-features = false }
@@ -28,14 +29,21 @@ serde_json = "1"
 ego-tree = "0.10"
 scraper = "0.22"
 encoding_rs = "0.8"
-clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-ureq = "3"
 base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = "3"
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
@@ -45,3 +53,4 @@ tokio = { version = "1", features = ["full"] }
 [[example]]
 name = "gemini-async-verify"
 path = "examples/gemini-async-verify/main.rs"
+required-features = ["async-gemini"]

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Integration tests for the ImageDescriber trait and its effect on DOCX/PPTX/XLSX/standalone image conversion.
 
 use std::io::{Cursor, Write};
