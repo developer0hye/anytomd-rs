@@ -33,6 +33,90 @@ A pure Rust tool and library that converts various document formats into Markdow
 
 Format is auto-detected from magic bytes and file extension. ZIP-based formats (DOCX/PPTX/XLSX) are distinguished by inspecting internal archive structure.
 
+## Conversion Examples
+
+### CSV
+
+A CSV file with multilingual data:
+
+```
+Name,Age,City
+Alice,30,Seoul
+Bob,25,東京
+Charlie,35,New York
+다영,28,서울
+```
+
+**Output:**
+
+```markdown
+| Name | Age | City |
+|---|---|---|
+| Alice | 30 | Seoul |
+| Bob | 25 | 東京 |
+| Charlie | 35 | New York |
+| 다영 | 28 | 서울 |
+```
+
+### DOCX
+
+A Word document with headings, links, Korean text, and emoji:
+
+**Output:**
+
+```markdown
+# Sample Document
+
+This is a simple paragraph.
+
+## Section One
+
+Visit [Example](https://example.com) for more info.
+
+Korean: 한국어 테스트
+
+Emoji: 🚀✨🌍
+
+### Subsection
+
+Final paragraph with mixed content.
+```
+
+### PPTX
+
+A PowerPoint presentation with slides, tables, speaker notes, and multilingual content:
+
+**Output:**
+
+```markdown
+## Slide 1: Sample Presentation
+
+Welcome to the presentation.
+
+---
+
+## Slide 2
+
+Data Overview
+
+| Name | Value | Status |
+|---|---|---|
+| Alpha | 100 | Active |
+| Beta | 200 | Inactive |
+| Gamma | 300 | Active |
+
+> Note: Remember to explain the data table.
+
+---
+
+## Slide 3: Multilingual
+
+한국어 테스트
+🚀✨🌍
+
+> Note: Test multilingual rendering.
+```
+
 ## Installation
 
 ```sh
