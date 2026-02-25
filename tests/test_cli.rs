@@ -97,6 +97,22 @@ fn test_cli_stdin_csv_format() {
         .stdout(predicate::str::contains("| Name | Age |"));
 }
 
+/// Stdin JSON with UTF-16 LE BOM should be decoded.
+#[test]
+fn test_cli_stdin_json_utf16_bom() {
+    let mut input = vec![0xFF, 0xFE];
+    for code_unit in "{\"k\":1}\n".encode_utf16() {
+        input.extend_from_slice(&code_unit.to_le_bytes());
+    }
+
+    cmd()
+        .args(["--format", "json"])
+        .write_stdin(input)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"k\""));
+}
+
 /// --format overrides file extension detection.
 #[test]
 fn test_cli_format_override_on_file() {
