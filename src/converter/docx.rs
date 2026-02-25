@@ -15,7 +15,7 @@ use zip::ZipArchive;
 
 use crate::converter::ooxml_utils::{
     ImageInfo, PendingImageResolution, Relationship, parse_relationships,
-    resolve_image_placeholders,
+    resolve_image_placeholders, resolve_relative_to_file,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -1216,15 +1216,14 @@ impl DocxConverter {
                 if total_image_bytes >= options.max_total_image_bytes {
                     break;
                 }
-                let image_path = format!("word/{}", rel.target);
+                let image_path = resolve_relative_to_file("word/document.xml", &rel.target);
                 if let Ok(Some(img_data)) = read_zip_bytes(&mut archive, &image_path) {
                     total_image_bytes += img_data.len();
                     if total_image_bytes <= options.max_total_image_bytes {
-                        let filename = rel
-                            .target
+                        let filename = image_path
                             .rsplit('/')
                             .next()
-                            .unwrap_or(&rel.target)
+                            .unwrap_or(&image_path)
                             .to_string();
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
@@ -2318,6 +2317,29 @@ mod tests {
         let result = converter.convert(&data, &options).unwrap();
         assert!(result.markdown.contains("![Described image](image1.png)"));
         assert!(!result.images.is_empty());
+    }
+
+    #[test]
+    fn test_docx_image_describer_absolute_target_path() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Original alt"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="/word/media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "Described image".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result.markdown.contains("![Described image](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
     }
 
     /// Helper: build a DOCX with multiple embedded image files.
