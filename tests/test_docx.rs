@@ -201,8 +201,7 @@ fn build_textbox_docx() -> Vec<u8> {
 #[test]
 fn test_docx_textbox_convert_file() {
     let data = build_textbox_docx();
-    let result =
-        anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
 
     // Heading
     assert!(
@@ -227,18 +226,14 @@ fn test_docx_textbox_convert_file() {
         result.markdown
     );
     assert!(
-        result
-            .markdown
-            .contains("Final paragraph of the document."),
+        result.markdown.contains("Final paragraph of the document."),
         "markdown was: {}",
         result.markdown
     );
 
     // Text box content (via mc:AlternateContent > Fallback)
     assert!(
-        result
-            .markdown
-            .contains("**Important notice in text box**"),
+        result.markdown.contains("**Important notice in text box**"),
         "bold text box content missing, markdown was: {}",
         result.markdown
     );
@@ -255,9 +250,7 @@ fn test_docx_textbox_convert_file() {
 
     // Direct w:pict text box
     assert!(
-        result
-            .markdown
-            .contains("*Direct VML text box content*"),
+        result.markdown.contains("*Direct VML text box content*"),
         "italic direct text box content missing, markdown was: {}",
         result.markdown
     );
@@ -272,8 +265,5 @@ fn test_docx_textbox_convert_file() {
     );
 
     // Title
-    assert_eq!(
-        result.title,
-        Some("Text Box Test Document".to_string()),
-    );
+    assert_eq!(result.title, Some("Text Box Test Document".to_string()),);
 }

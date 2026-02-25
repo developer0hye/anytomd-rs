@@ -231,8 +231,7 @@ fn build_group_shapes_pptx() -> Vec<u8> {
 #[test]
 fn test_pptx_group_shape_convert_file() {
     let data = build_group_shapes_pptx();
-    let result =
-        anytomd::convert_bytes(&data, "pptx", &ConversionOptions::default()).unwrap();
+    let result = anytomd::convert_bytes(&data, "pptx", &ConversionOptions::default()).unwrap();
 
     // Slide 1
     assert!(
@@ -241,17 +240,13 @@ fn test_pptx_group_shape_convert_file() {
         result.markdown
     );
     assert!(
-        result
-            .markdown
-            .contains("Regular body text before group."),
+        result.markdown.contains("Regular body text before group."),
         "markdown was: {}",
         result.markdown
     );
     // Group shape child texts
     assert!(
-        result
-            .markdown
-            .contains("Grouped callout: Project Alpha"),
+        result.markdown.contains("Grouped callout: Project Alpha"),
         "markdown was: {}",
         result.markdown
     );
@@ -277,9 +272,7 @@ fn test_pptx_group_shape_convert_file() {
     );
     // Nested group text with emoji
     assert!(
-        result
-            .markdown
-            .contains("Deeply nested group text 🚀"),
+        result.markdown.contains("Deeply nested group text 🚀"),
         "markdown was: {}",
         result.markdown
     );
@@ -296,8 +289,5 @@ fn test_pptx_group_shape_convert_file() {
     );
 
     // Title from first slide
-    assert_eq!(
-        result.title,
-        Some("Group Shape Demo".to_string()),
-    );
+    assert_eq!(result.title, Some("Group Shape Demo".to_string()),);
 }
