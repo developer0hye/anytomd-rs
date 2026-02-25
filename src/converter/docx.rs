@@ -2342,6 +2342,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_docx_image_describer_dot_slash_target_path() {
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr descr="Original alt"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="./media/image1.png"/></Relationships>"#;
+        let fake_png = b"fake-png-data";
+        let data = build_test_docx_with_image(&doc, rels, "word/media/image1.png", fake_png);
+
+        let converter = DocxConverter;
+        let options = ConversionOptions {
+            image_describer: Some(Arc::new(MockDescriber {
+                description: "Described image".to_string(),
+            })),
+            ..Default::default()
+        };
+        let result = converter.convert(&data, &options).unwrap();
+        assert!(
+            result.markdown.contains("![Described image](image1.png)"),
+            "markdown was: {}",
+            result.markdown
+        );
+    }
+
     /// Helper: build a DOCX with multiple embedded image files.
     fn build_test_docx_with_images(
         document_xml: &str,

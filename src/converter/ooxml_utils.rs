@@ -100,28 +100,14 @@ pub(crate) fn derive_rels_path(file_path: &str) -> String {
 /// Example: base_dir=`xl/drawings`, target=`../media/image1.png`
 ///          -> `xl/media/image1.png`
 pub(crate) fn resolve_relative_path(base_dir: &str, target: &str) -> String {
-    if !target.starts_with("../") {
-        if base_dir.is_empty() {
-            return target.to_string();
-        }
-        return format!("{base_dir}/{target}");
-    }
-
-    let mut parts: Vec<&str> = base_dir.split('/').collect();
-
-    let mut remaining = target;
-    while let Some(rest) = remaining.strip_prefix("../") {
-        if parts.pop().is_none() {
-            break;
-        }
-        remaining = rest;
-    }
-
-    if parts.is_empty() {
-        remaining.to_string()
+    let joined = if target.starts_with('/') {
+        target.to_string()
+    } else if base_dir.is_empty() {
+        target.to_string()
     } else {
-        format!("{}/{remaining}", parts.join("/"))
-    }
+        format!("{base_dir}/{target}")
+    };
+    normalize_package_path(&joined)
 }
 
 /// Resolve a relative path target against a base file path.
@@ -132,36 +118,33 @@ pub(crate) fn resolve_relative_path(base_dir: &str, target: &str) -> String {
 /// Example: base_file=`ppt/slides/slide1.xml`, target=`../media/image1.png`
 ///          -> `ppt/media/image1.png`
 pub(crate) fn resolve_relative_to_file(base_file: &str, target: &str) -> String {
-    if let Some(stripped) = target.strip_prefix('/') {
-        return stripped.to_string();
-    }
-
-    if !target.starts_with("../") {
-        // Same-directory target
-        if let Some(pos) = base_file.rfind('/') {
-            return format!("{}/{target}", &base_file[..pos]);
-        }
-        return target.to_string();
-    }
-
-    // Walk up for each "../" prefix
-    let mut base_parts: Vec<&str> = base_file.split('/').collect();
-    // Remove the filename from base
-    base_parts.pop();
-
-    let mut target_remaining = target;
-    while let Some(rest) = target_remaining.strip_prefix("../") {
-        if base_parts.pop().is_none() {
-            break;
-        }
-        target_remaining = rest;
-    }
-
-    if base_parts.is_empty() {
-        target_remaining.to_string()
+    let base_dir = base_file
+        .rfind('/')
+        .map(|pos| &base_file[..pos])
+        .unwrap_or("");
+    let joined = if target.starts_with('/') {
+        target.to_string()
+    } else if base_dir.is_empty() {
+        target.to_string()
     } else {
-        format!("{}/{target_remaining}", base_parts.join("/"))
+        format!("{base_dir}/{target}")
+    };
+    normalize_package_path(&joined)
+}
+
+fn normalize_package_path(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            let _ = out.pop();
+            continue;
+        }
+        out.push(part);
     }
+    out.join("/")
 }
 
 /// Replace image placeholders in markdown and plain text with descriptions
@@ -384,6 +367,14 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_relative_path_current_dir_segment() {
+        assert_eq!(
+            resolve_relative_path("xl/drawings", "./media/image1.png"),
+            "xl/drawings/media/image1.png"
+        );
+    }
+
+    #[test]
     fn test_resolve_relative_path_empty_base() {
         assert_eq!(resolve_relative_path("", "image1.png"), "image1.png");
     }
@@ -401,6 +392,14 @@ mod tests {
         assert_eq!(
             resolve_relative_to_file("ppt/slides/slide1.xml", "../media/image1.png"),
             "ppt/media/image1.png"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_to_file_current_dir_segment() {
+        assert_eq!(
+            resolve_relative_to_file("word/document.xml", "./media/image1.png"),
+            "word/media/image1.png"
         );
     }
 
@@ -423,21 +422,17 @@ mod tests {
     #[test]
     fn test_resolve_relative_path_excessive_parent_stops_at_root() {
         // base "a" has 1 segment. "../../etc/passwd" tries 2 levels up.
-        // First "../" pops "a"; second "../" finds empty vec and breaks.
-        // The unresolved "../etc/passwd" remains as-is.
-        assert_eq!(
-            resolve_relative_path("a", "../../etc/passwd"),
-            "../etc/passwd"
-        );
+        // After reaching root, extra "../" are clamped.
+        assert_eq!(resolve_relative_path("a", "../../etc/passwd"), "etc/passwd");
     }
 
     #[test]
     fn test_resolve_relative_to_file_excessive_parent_stops_at_root() {
         // base_file "a/b.xml" → directory segments: ["a"].
-        // First "../" pops "a"; second "../" finds empty vec and breaks.
+        // After reaching root, extra "../" are clamped.
         assert_eq!(
             resolve_relative_to_file("a/b.xml", "../../etc/passwd"),
-            "../etc/passwd"
+            "etc/passwd"
         );
     }
 
