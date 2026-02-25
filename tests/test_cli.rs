@@ -63,6 +63,17 @@ fn test_cli_stdin_with_format() {
         .stdout(predicate::str::contains("hello world"));
 }
 
+/// Stdin format should be case-insensitive.
+#[test]
+fn test_cli_stdin_with_uppercase_format() {
+    cmd()
+        .args(["--format", "TXT"])
+        .write_stdin("hello world")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello world"));
+}
+
 /// Stdin with CSV format.
 #[test]
 fn test_cli_stdin_csv_format() {

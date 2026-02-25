@@ -145,6 +145,9 @@ pub fn convert_bytes(
     extension: &str,
     options: &ConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
+    let extension = extension.trim();
+    let extension_norm = extension.to_ascii_lowercase();
+
     if data.len() > options.max_input_bytes {
         return Err(ConvertError::InputTooLarge {
             size: data.len(),
@@ -152,7 +155,7 @@ pub fn convert_bytes(
         });
     }
 
-    if extension == "pdf" {
+    if extension_norm == "pdf" {
         return Err(ConvertError::FormatNotSupported {
             extension: "pdf".to_string(),
             reason: "PDF is intentionally unsupported — Gemini, ChatGPT, and Claude \
@@ -177,8 +180,8 @@ pub fn convert_bytes(
     // needs the extension for language detection (the Converter trait's
     // convert() method doesn't receive the extension).
     let code_conv = CodeConverter;
-    if code_conv.can_convert(extension, data) {
-        let result = code_conv.convert_with_extension(data, extension, options)?;
+    if code_conv.can_convert(&extension_norm, data) {
+        let result = code_conv.convert_with_extension(data, &extension_norm, options)?;
         return enforce_strict_mode(result, options.strict);
     }
 
@@ -196,14 +199,14 @@ pub fn convert_bytes(
     ];
 
     for conv in &converters {
-        if conv.can_convert(extension, data) {
+        if conv.can_convert(&extension_norm, data) {
             let result = conv.convert(data, options)?;
             return enforce_strict_mode(result, options.strict);
         }
     }
 
     Err(ConvertError::UnsupportedFormat {
-        extension: extension.to_string(),
+        extension: extension_norm,
     })
 }
 
@@ -296,6 +299,9 @@ pub async fn convert_bytes_async(
     extension: &str,
     options: &converter::AsyncConversionOptions,
 ) -> Result<ConversionResult, ConvertError> {
+    let extension = extension.trim();
+    let extension_norm = extension.to_ascii_lowercase();
+
     if data.len() > options.base.max_input_bytes {
         return Err(ConvertError::InputTooLarge {
             size: data.len(),
@@ -303,7 +309,7 @@ pub async fn convert_bytes_async(
         });
     }
 
-    if extension == "pdf" {
+    if extension_norm == "pdf" {
         return Err(ConvertError::FormatNotSupported {
             extension: "pdf".to_string(),
             reason: "PDF is intentionally unsupported — Gemini, ChatGPT, and Claude \
@@ -314,7 +320,7 @@ pub async fn convert_bytes_async(
 
     // For image-bearing formats, use convert_inner() + async resolve
     if let Some(ref describer) = options.async_image_describer {
-        match extension {
+        match extension_norm.as_str() {
             "docx" => {
                 let conv = converter::docx::DocxConverter;
                 let (mut result, pending) = conv.convert_inner(data, &options.base)?;
@@ -384,7 +390,7 @@ pub async fn convert_bytes_async(
     }
 
     // Fallback: use sync convert for non-image formats or when no async describer
-    convert_bytes(data, extension, &options.base)
+    convert_bytes(data, &extension_norm, &options.base)
 }
 
 #[cfg(test)]
@@ -440,6 +446,12 @@ mod tests {
         let data = b"caf\xe9";
         let result = convert_bytes(data, "txt", &ConversionOptions::default()).unwrap();
         assert!(!result.warnings.is_empty(), "expected decoding warning");
+    }
+
+    #[test]
+    fn test_convert_bytes_extension_case_insensitive() {
+        let result = convert_bytes(b"hello world", " TXT ", &ConversionOptions::default()).unwrap();
+        assert!(result.markdown.contains("hello world"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
