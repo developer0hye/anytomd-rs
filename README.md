@@ -119,8 +119,28 @@ Data Overview
 
 ## Installation
 
+### Rust (Cargo)
+
 ```sh
 cargo add anytomd
+```
+
+### npm (WASM)
+
+```sh
+npm install anytomd
+```
+
+```js
+import init, { convertBytes } from 'anytomd';
+
+await init();
+
+const response = await fetch('document.docx');
+const bytes = new Uint8Array(await response.arrayBuffer());
+
+const result = convertBytes(bytes, 'docx');
+console.log(result.markdown);
 ```
 
 ### Feature Flags

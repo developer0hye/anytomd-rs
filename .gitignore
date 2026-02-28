@@ -25,3 +25,6 @@ reference/
 
 # macOS
 .DS_Store
+
+# wasm-pack build output
+pkg/
