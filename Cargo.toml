@@ -13,6 +13,9 @@ keywords = ["markdown", "converter", "document", "llm"]
 categories = ["parser-implementations", "text-processing"]
 exclude = ["examples/"]
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["async-gemini"]
 async = ["dep:futures-util"]
