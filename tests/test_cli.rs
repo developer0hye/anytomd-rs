@@ -216,3 +216,93 @@ fn test_cli_partial_failure_multiple_files() {
         .stdout(predicate::str::contains("Alice"))
         .stderr(predicate::str::contains("error: nonexistent.csv"));
 }
+
+/// --max-input-size rejects files exceeding the limit.
+#[test]
+fn test_cli_max_input_size_rejects_large() {
+    cmd()
+        .args(["--max-input-size", "1B", "tests/fixtures/sample.csv"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("error:"));
+}
+
+/// --max-input-size accepts valid size strings.
+#[test]
+fn test_cli_max_input_size_accepts_valid() {
+    cmd()
+        .args(["--max-input-size", "1GiB", "tests/fixtures/sample.csv"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice"));
+}
+
+/// --max-input-size rejects invalid size strings.
+#[test]
+fn test_cli_max_input_size_invalid_value() {
+    cmd()
+        .args(["--max-input-size", "abc", "tests/fixtures/sample.csv"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+/// --max-image-size is accepted.
+#[test]
+fn test_cli_max_image_size_accepted() {
+    cmd()
+        .args(["--max-image-size", "100MB", "tests/fixtures/sample.csv"])
+        .assert()
+        .success();
+}
+
+/// --max-zip-size is accepted.
+#[test]
+fn test_cli_max_zip_size_accepted() {
+    cmd()
+        .args(["--max-zip-size", "2GiB", "tests/fixtures/sample.csv"])
+        .assert()
+        .success();
+}
+
+/// --gemini without GEMINI_API_KEY fails with exit code 2.
+#[test]
+fn test_cli_gemini_without_api_key() {
+    cmd()
+        .args(["--gemini", "tests/fixtures/sample.csv"])
+        .env_remove("GEMINI_API_KEY")
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("--gemini"));
+}
+
+/// --gemini-model requires --gemini.
+#[test]
+fn test_cli_gemini_model_requires_gemini() {
+    cmd()
+        .args(["--gemini-model", "some-model", "tests/fixtures/sample.csv"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+/// --plain-text with size limits is accepted.
+#[test]
+fn test_cli_plain_text_with_size_limits() {
+    cmd()
+        .args([
+            "--plain-text",
+            "--max-input-size",
+            "500MB",
+            "--max-image-size",
+            "100MB",
+            "--max-zip-size",
+            "1GiB",
+            "tests/fixtures/sample.csv",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Alice"));
+}

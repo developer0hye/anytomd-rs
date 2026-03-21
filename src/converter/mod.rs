@@ -117,10 +117,10 @@ impl Default for ConversionOptions {
     fn default() -> Self {
         Self {
             extract_images: false,
-            max_total_image_bytes: 50 * 1024 * 1024, // 50 MB
+            max_total_image_bytes: 4_usize.saturating_mul(1024 * 1024 * 1024), // 4 GiB (usize::MAX on 32-bit)
             strict: false,
-            max_input_bytes: 100 * 1024 * 1024, // 100 MB
-            max_uncompressed_zip_bytes: 500 * 1024 * 1024, // 500 MB
+            max_input_bytes: 8_usize.saturating_mul(1024 * 1024 * 1024), // 8 GiB (usize::MAX on 32-bit)
+            max_uncompressed_zip_bytes: 16_usize.saturating_mul(1024 * 1024 * 1024), // 16 GiB (usize::MAX on 32-bit)
             image_describer: None,
         }
     }

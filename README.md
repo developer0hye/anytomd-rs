@@ -252,9 +252,16 @@ anytomd --plain-text document.docx
 # Plain text from stdin
 echo "Name,Age" | anytomd --format csv --plain-text
 
-# Auto image descriptions (just set GEMINI_API_KEY)
+# Image descriptions via Gemini (requires GEMINI_API_KEY env var)
 export GEMINI_API_KEY=your-key
-anytomd presentation.pptx
+anytomd --gemini presentation.pptx
+
+# Use a specific Gemini model
+anytomd --gemini --gemini-model gemini-2.5-flash-lite presentation.pptx
+
+# Resource limits (defaults: 8GiB input, 4GiB images, 16GiB zip)
+anytomd --max-input-size 500MB document.docx
+anytomd --max-zip-size 2GiB archive.xlsx
 ```
 
 ### Exit Codes
