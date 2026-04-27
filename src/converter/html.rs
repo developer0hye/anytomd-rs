@@ -271,10 +271,8 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                         plain_start_pos: state.plain_output.len(),
                     });
                 }
-                "p" => {
-                    if !state.in_table_cell() {
-                        state.both_ensure_blank_line();
-                    }
+                "p" if !state.in_table_cell() => {
+                    state.both_ensure_blank_line();
                 }
                 "a" => {
                     let href = el.attr("href").unwrap_or("").to_string();
@@ -297,11 +295,9 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                     state.push_str("*");
                     // plain text: no markers
                 }
-                "code" => {
-                    if !state.in_pre {
-                        state.push_str("`");
-                        // plain text: no backtick
-                    }
+                "code" if !state.in_pre => {
+                    state.push_str("`");
+                    // plain text: no backtick
                 }
                 "pre" => {
                     state.in_pre = true;
@@ -463,10 +459,8 @@ fn handle_close(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                     }
                 }
             }
-            "p" => {
-                if !state.in_table_cell() {
-                    state.both_ensure_blank_line();
-                }
+            "p" if !state.in_table_cell() => {
+                state.both_ensure_blank_line();
             }
             "a" => {
                 if let Some(pending) = state.pending_link.take() {
@@ -497,11 +491,9 @@ fn handle_close(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                 state.push_str("*");
                 // plain text: no closing marker
             }
-            "code" => {
-                if !state.in_pre {
-                    state.push_str("`");
-                    // plain text: no closing backtick
-                }
+            "code" if !state.in_pre => {
+                state.push_str("`");
+                // plain text: no closing backtick
             }
             "pre" => {
                 state.ensure_newline();
