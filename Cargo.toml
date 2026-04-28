@@ -11,7 +11,15 @@ documentation = "https://docs.rs/anytomd"
 readme = "README.md"
 keywords = ["markdown", "converter", "document", "llm"]
 categories = ["parser-implementations", "text-processing"]
-exclude = ["examples/", ".env", ".env.*", "**/.env", "**/.env.*"]
+# Whitelist what ships to crates.io. Anything outside this list — including
+# any future `.env`, IDE state, dev docs, CI configs — cannot leak by accident.
+# Cargo always auto-includes Cargo.toml, Cargo.lock, Cargo.toml.orig,
+# .cargo_vcs_info.json, and the file referenced by `readme`.
+include = [
+    "src/**/*.rs",
+    "/LICENSE",
+    "/README.md",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

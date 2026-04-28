@@ -27,5 +27,11 @@ Thumbs.db
 # Mutation testing output
 **/mutants.out*/
 
-# Claude config
+# Local tooling state — Claude Code, oh-my-claudecode
 .claude/
+.omc/
+
+# Local environment files — never bake into images
+.env
+.env.*
+!.env.example

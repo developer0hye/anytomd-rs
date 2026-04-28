@@ -108,3 +108,43 @@ jobs:
       - name: Run WASM tests
         run: wasm-pack test --node --no-default-features --features wasm
 
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs full history to scan past commits
+          fetch-depth: 0
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies for known vulnerabilities
+        # Allowed-to-fail: a fresh advisory shouldn't block unrelated PRs;
+        # the job still surfaces it loudly in the run log.
+        continue-on-error: true
+        run: cargo audit
+
+      - name: Audit publish package contents
+        # Belt-and-suspenders against the v1.2.1 leak class:
+        # if anything sensitive ever ends up in `cargo package --list`,
+        # CI fails before crates.io ever sees it.
+        run: |
+          set -e
+          list=$(cargo package --list 2>&1)
+          echo "$list"
+          if echo "$list" | grep -E '(^|/)\.env(\.|$)|(^|/)\.omc/|(^|/)\.claude/|\.pem$|\.key$|id_rsa|credentials|secrets?\.' ; then
+            echo "::error::Sensitive file pattern found in publish package contents"
+            exit 1
+          fi
+
