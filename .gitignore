@@ -39,3 +39,27 @@ pkg/
 # To intentionally share a file from one of these dirs, add an explicit `!path` exception.
 .claude/
 .omc/
+.vscode/
+.cursor/
+.idea/
+
+# Editor swap and backup files
+*.swp
+*.swo
+*~
+*.bak
+
+# Build/coverage artifacts that may embed paths or secrets
+*.log
+coverage/
+*.profraw
+lcov.info
+tarpaulin-report.html
+
+# Credential-shaped files — categorical block, even if accidentally created
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*credentials*
+*secrets*
