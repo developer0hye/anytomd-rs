@@ -302,6 +302,20 @@ Follow all steps in order — do not skip any.
 7. **Create GitHub release** — `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes --latest` (from `main` at the merge commit)
 8. **Verify sync** — confirm `cargo search anytomd` matches the GitHub release tag and `Cargo.toml`
 
+### Pre-publish Safety Checks
+
+**Mandatory before step 6 (`cargo publish`).** Skipping these has historically leaked credentials — treat as non-negotiable.
+
+1. **Working tree must be clean.** `git status --short` must produce no output. If untracked files appear (local IDE/tooling state, scratch files, generated artifacts), add them to `.gitignore` in a **separate PR** before publishing. Never proceed with `--allow-dirty` to "just get past it."
+2. **Audit the package contents.** Run:
+   ```bash
+   cargo package --list | grep -E '\.env|\.omc|\.claude|secret|credential|token|key|password'
+   ```
+   The grep must return nothing. If anything matches, stop and add the file to both `.gitignore` AND `Cargo.toml`'s `package.exclude` (defense in depth) before retrying.
+3. **`--allow-dirty` is off-limits.** Do not use `cargo publish --allow-dirty` unless every uncommitted/untracked file in the working tree has been inspected and individually confirmed safe to ship to crates.io. Any uncertainty → do not publish.
+
+**Background — the v1.2.1 incident.** Versions v0.1.0 through v1.2.1 leaked an active Google Gemini API key via a `.env` file that was untracked, not in `.gitignore`, and got bundled when `cargo publish --allow-dirty` was used. v1.2.2 added `.env` patterns to both `.gitignore` and `Cargo.toml`'s `package.exclude`. A near-miss followed during the v1.2.2 publish itself when the `.omc/` local-tooling directory would have shipped the same way had `--allow-dirty` been reused. Both incidents trace to the same root cause: untracked working-tree state being included by `cargo package`. Steps 1–3 above exist to make that root cause unreachable.
+
 ### Version Sync Rules
 
 - **One version, three places**: `Cargo.toml` (source of truth) = crates.io = GitHub release tag

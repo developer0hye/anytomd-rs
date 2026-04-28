@@ -33,3 +33,9 @@ pkg/
 .env
 .env.*
 !.env.example
+
+# Local tooling state (Claude Code, oh-my-claudecode, IDEs) — never commit or publish
+# These directories hold per-user/per-machine state that must not ship to crates.io.
+# To intentionally share a file from one of these dirs, add an explicit `!path` exception.
+.claude/
+.omc/
