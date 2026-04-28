@@ -28,3 +28,8 @@ reference/
 
 # wasm-pack build output
 pkg/
+
+# Local environment files — never commit or publish
+.env
+.env.*
+!.env.example

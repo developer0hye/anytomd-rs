@@ -659,11 +659,9 @@ fn parse_notes(xml: &str) -> Option<String> {
                     }
                 }
             }
-            Ok(Event::Text(ref e)) => {
-                if in_shape && in_text && in_run {
-                    let text = e.unescape().unwrap_or_default().to_string();
-                    current_paragraph.push_str(&text);
-                }
+            Ok(Event::Text(ref e)) if in_shape && in_text && in_run => {
+                let text = e.unescape().unwrap_or_default().to_string();
+                current_paragraph.push_str(&text);
             }
             Ok(Event::End(ref e)) => {
                 let local = e.local_name();
