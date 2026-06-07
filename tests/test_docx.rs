@@ -358,3 +358,413 @@ fn test_docx_extract_comments_end_to_end() {
     assert!(result.plain_text.contains("source: next Friday"));
     assert!(!result.plain_text.contains("# Comments"));
 }
+
+/// Build a minimal DOCX in memory from a document.xml body and optional styles.
+fn build_docx_from_body(body: &str, styles_xml: Option<&str>) -> Vec<u8> {
+    use std::io::Write;
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    let buf = Vec::new();
+    let mut zip = ZipWriter::new(Cursor::new(buf));
+    let opts = SimpleFileOptions::default();
+
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+    )
+    .unwrap();
+
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+    )
+    .unwrap();
+
+    let document_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
+    );
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document_xml.as_bytes()).unwrap();
+
+    if let Some(styles) = styles_xml {
+        zip.start_file("word/styles.xml", opts).unwrap();
+        zip.write_all(styles.as_bytes()).unwrap();
+    }
+
+    zip.finish().unwrap().into_inner()
+}
+
+/// End-to-end test for a merged/layout table.
+///
+/// The synthetic document mirrors the structure of a layout table that uses
+/// `gridSpan`/`vMerge` for sectioning rather than tabular data: a full-width,
+/// heading-styled banner row; a narrow-label + wide-spanning-value row; and a
+/// two-row data grid with a vertically merged label column, plus an
+/// authoritative `<w:tblGrid>` declaring four columns.
+///
+/// The previous converter collapsed all of this to a single column; the converter
+/// must preserve every column by rendering it as one empty-filled GFM grid.
+#[test]
+fn test_docx_layout_table_grid_integration() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style></w:styles>"#;
+
+    // 4-column grid. Rows: banner (span4, Heading2), label/value (1 + span3),
+    // data grid header (vMerge restart label + 3 cols), data row (vMerge continue + 3 cols).
+    let body = concat!(
+        r#"<w:tbl>"#,
+        r#"<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        // Banner row, heading-styled
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="4"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Section Title</w:t></w:r></w:p></w:tc></w:tr>"#,
+        // Label/value row
+        r#"<w:tr><w:tc><w:p><w:r><w:t>Field</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>"#,
+        // Data grid header: vMerge restart label + 3 data columns
+        r#"<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Info</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col B</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col C</w:t></w:r></w:p></w:tc></w:tr>"#,
+        // Data row: vMerge continue + 3 values
+        r#"<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"</w:tbl>"#,
+    );
+
+    let data = build_docx_from_body(body, Some(styles));
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+
+    // The whole table is one empty-filled GFM grid; every row keeps all columns.
+    assert!(
+        result.markdown.contains("| Section Title |  |  |  |"),
+        "banner not an empty-filled header row: {}",
+        result.markdown
+    );
+    assert!(
+        result.markdown.contains("| Field | Value |  |  |"),
+        "label/value not a grid row: {}",
+        result.markdown
+    );
+    assert!(
+        result.markdown.contains("| Info | Col A | Col B | Col C |"),
+        "grid header columns missing: {}",
+        result.markdown
+    );
+    // The vMerge continuation cell is empty in the data row.
+    assert!(
+        result.markdown.contains("|  | 1 | 2 | 3 |"),
+        "vMerge continuation not empty: {}",
+        result.markdown
+    );
+    // No heading/bold linearization.
+    assert!(!result.markdown.contains('#'), "md: {}", result.markdown);
+    assert!(!result.markdown.contains("**"), "md: {}", result.markdown);
+
+    // Plain text is tab-separated, no markdown markers.
+    assert!(result.plain_text.contains("Section Title"));
+    assert!(!result.plain_text.contains("**"));
+    assert!(result.plain_text.contains("Col A\tCol B\tCol C"));
+}
+
+/// Golden test: the merged/layout table renders to a stable, fully-preserved
+/// Markdown layout. Update the expected file with a documented reason if the
+/// hybrid rendering intentionally changes.
+#[test]
+fn test_docx_layout_table_golden() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style></w:styles>"#;
+    let body = concat!(
+        r#"<w:tbl>"#,
+        r#"<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="4"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Section Title</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>Field</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Info</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col B</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Col C</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"</w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, Some(styles));
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    let expected = include_str!("fixtures/expected/layout_table.docx.md");
+    assert_eq!(normalize(&result.markdown), normalize(expected));
+}
+
+/// Regression (review finding): a long-form `<w:gridSpan></w:gridSpan>` (not
+/// self-closing) must still be parsed, so the full-width banner spans the grid
+/// (empty-filled) rather than collapsing the table to one column.
+#[test]
+fn test_docx_long_form_gridspan_parsed() {
+    let body = concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="1"/><w:gridCol w:w="1"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"></w:gridSpan></w:tcPr><w:p><w:r><w:t>Banner</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    // Banner is the header row, empty-filled to the full grid width.
+    assert!(
+        result.markdown.contains("| Banner |  |"),
+        "long-form gridSpan not parsed: {}",
+        result.markdown
+    );
+    assert!(
+        result.markdown.contains("| A | B |"),
+        "md: {}",
+        result.markdown
+    );
+}
+
+/// Regression (review finding): a row with more cells than the declared
+/// `<w:tblGrid>` width must keep every cell. The grid count is a floor, not a
+/// ceiling, so trailing cells are no longer silently dropped.
+#[test]
+fn test_docx_row_wider_than_tblgrid_keeps_all_cells() {
+    let body = concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="1"/><w:gridCol w:w="1"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    assert!(
+        result.markdown.contains("| A | B | C |"),
+        "trailing cell dropped: {}",
+        result.markdown
+    );
+}
+
+/// Regression (review finding): an orphan vMerge continuation cell that carries
+/// text (no matching restart) must not silently drop its content.
+#[test]
+fn test_docx_orphan_vmerge_preserves_text() {
+    let body = concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="1"/><w:gridCol w:w="1"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>OrphanText</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>sib</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>y</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    assert!(
+        result.markdown.contains("OrphanText"),
+        "md: {}",
+        result.markdown
+    );
+    assert!(
+        result.plain_text.contains("OrphanText"),
+        "plain: {}",
+        result.plain_text
+    );
+}
+
+/// A table inside a text box inside a table cell: all content must survive
+/// (no data loss), which is the property that matters for extraction.
+///
+/// Known limitation: a text box is a separate content flow, and because the
+/// enclosing table is buffered and rendered at its end tag, the text box's inner
+/// table is emitted to the document before the enclosing table. Document order is
+/// therefore not preserved for this (rare, arguably malformed) nesting. This test
+/// asserts content survival and pins the current ordering so a future ordering
+/// fix is a deliberate, visible change rather than an accident.
+#[test]
+fn test_docx_textbox_table_in_cell_content_survives() {
+    let body = concat!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="1"/></w:tblGrid><w:tr><w:tc>"#,
+        r#"<w:p><w:r><w:t>outer-before</w:t></w:r>"#,
+        r#"<w:r><w:pict><v:shape><v:textbox><w:txbxContent>"#,
+        r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>inner-cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"</w:txbxContent></v:textbox></v:shape></w:pict></w:r>"#,
+        r#"<w:r><w:t>outer-after</w:t></w:r></w:p>"#,
+        r#"</w:tc></w:tr></w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    // No data loss: all three pieces of content are present.
+    for needle in ["outer-before", "inner-cell", "outer-after"] {
+        assert!(
+            result.markdown.contains(needle),
+            "missing {needle}: {}",
+            result.markdown
+        );
+    }
+    // The text-box content does NOT leak into the enclosing cell (it renders to
+    // the document, not inside the outer cell's row).
+    let inner = result.markdown.find("inner-cell").unwrap();
+    let outer = result.markdown.find("outer-before").unwrap();
+    // Known-order limitation: the text box's table currently precedes the
+    // enclosing table. Pinned so a future fix is intentional.
+    assert!(
+        inner < outer,
+        "ordering changed (a fix?): {}",
+        result.markdown
+    );
+}
+
+/// Regression (review finding): a huge gridSpan must not drive unbounded
+/// allocation; conversion completes quickly with bounded output.
+#[test]
+fn test_docx_huge_gridspan_bounded() {
+    let body = concat!(
+        r#"<w:tbl>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="1000000"/></w:tcPr><w:p><w:r><w:t>X</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Y</w:t></w:r></w:p></w:tc></w:tr>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="1000000"/></w:tcPr><w:p><w:r><w:t>P</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Q</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    );
+    let data = build_docx_from_body(body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+    // Bounded output (not megabytes of empty pipes).
+    assert!(
+        result.markdown.len() < 100_000,
+        "output not bounded: {} bytes",
+        result.markdown.len()
+    );
+    assert!(result.markdown.contains('X'));
+}
+
+/// DoS guard (review finding): a table with more rows than the cell cap allows
+/// is truncated, and the dropped rows are observable via a ResourceLimitReached
+/// warning (best-effort: never silently drop content).
+#[test]
+fn test_docx_table_rows_capped_with_warning() {
+    use anytomd::WarningCode;
+
+    // Wide grid (1000 cols) ⇒ max_rows = MAX_TABLE_CELLS / 1000 = 100. Emit more
+    // than that so truncation triggers without building a huge document.
+    let cols = "<w:gridCol w:w=\"1\"/>".repeat(1000);
+    let mut body = format!("<w:tbl><w:tblGrid>{cols}</w:tblGrid>");
+    // 150 rows, each a single full-width gridSpan banner (one cell per row).
+    for i in 0..150 {
+        body.push_str(&format!(
+            r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="1000"/></w:tcPr><w:p><w:r><w:t>row{i}</w:t></w:r></w:p></w:tc></w:tr>"#
+        ));
+    }
+    body.push_str("</w:tbl>");
+
+    let data = build_docx_from_body(&body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+
+    // Truncated: an early row survives, a late row (beyond max_rows=100) does not.
+    assert!(result.markdown.contains("row0"), "early row missing");
+    assert!(
+        !result.markdown.contains("row149"),
+        "table not truncated: {}",
+        result.markdown.len()
+    );
+    // Dropping rows is observable.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ResourceLimitReached),
+        "expected ResourceLimitReached warning, got: {:?}",
+        result.warnings
+    );
+}
+
+/// Regression (review finding): a content-empty nested table is suppressed
+/// entirely, so it must not surface a ResourceLimitReached truncation warning —
+/// a warning without any visible output would be a false positive (nothing
+/// observable was dropped).
+#[test]
+fn test_docx_suppressed_empty_nested_table_emits_no_truncation_warning() {
+    use anytomd::WarningCode;
+
+    // Inner table: wide grid (1000 cols) ⇒ max_rows = MAX_TABLE_CELLS / 1000 =
+    // 100; 150 all-empty rows would trip the row cap, but every cell is blank so
+    // the whole inner table is suppressed and nothing visible is dropped.
+    let cols = "<w:gridCol w:w=\"1\"/>".repeat(1000);
+    let mut inner = format!("<w:tbl><w:tblGrid>{cols}</w:tblGrid>");
+    for _ in 0..150 {
+        inner.push_str(
+            r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="1000"/></w:tcPr><w:p/></w:tc></w:tr>"#,
+        );
+    }
+    inner.push_str("</w:tbl>");
+    let body = format!(
+        r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>OUT</w:t></w:r></w:p>{inner}</w:tc></w:tr></w:tbl>"#
+    );
+
+    let data = build_docx_from_body(&body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+
+    assert!(result.markdown.contains("OUT"), "outer cell text missing");
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ResourceLimitReached),
+        "false-positive truncation warning for a fully suppressed table: {:?}",
+        result.warnings
+    );
+}
+
+/// Regression (review finding): an all-blank outer table over the row cap is
+/// discarded (no output), so it must not surface a truncation warning either.
+#[test]
+fn test_docx_all_blank_overlimit_table_emits_no_warning_and_no_output() {
+    use anytomd::WarningCode;
+
+    let cols = "<w:gridCol w:w=\"1\"/>".repeat(1000);
+    let mut body = format!("<w:tbl><w:tblGrid>{cols}</w:tblGrid>");
+    for _ in 0..150 {
+        body.push_str(
+            r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="1000"/></w:tcPr><w:p/></w:tc></w:tr>"#,
+        );
+    }
+    body.push_str("</w:tbl>");
+
+    let data = build_docx_from_body(&body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+
+    assert!(
+        !result.markdown.contains('|'),
+        "all-blank table should be discarded, got: {}",
+        result.markdown
+    );
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ResourceLimitReached),
+        "false-positive truncation warning for a discarded table: {:?}",
+        result.warnings
+    );
+}
+
+/// Regression (review finding): a table that contains a nested table, followed
+/// by a paragraph, must have exactly one blank line between them — the same
+/// spacing as a normal table and the HTML linearize path (no extra blank line).
+#[test]
+fn test_docx_nested_table_one_blank_line_before_following_paragraph() {
+    let inner =
+        r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let body = format!(
+        concat!(
+            r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>before</w:t></w:r></w:p>{inner}</w:tc></w:tr></w:tbl>"#,
+            r#"<w:p><w:r><w:t>After paragraph.</w:t></w:r></w:p>"#,
+        ),
+        inner = inner
+    );
+    let data = build_docx_from_body(&body, None);
+    let result = anytomd::convert_bytes(&data, "docx", &ConversionOptions::default()).unwrap();
+
+    // The inner one-column table renders as `| inner |` / `|---|` (header +
+    // separator, no data rows). Assert the following paragraph is separated from
+    // the table's last line (`|---|`) by exactly one blank line (\n\n), not two.
+    let md = &result.markdown;
+    let after_idx = md.find("After paragraph.").expect("paragraph missing");
+    let before = &md[..after_idx];
+    assert!(before.contains("| inner |"), "inner table missing: {md}");
+    assert!(
+        before.ends_with("|---|\n\n"),
+        "expected exactly one blank line before the paragraph, before={before:?}"
+    );
+    assert!(
+        !before.ends_with("|---|\n\n\n"),
+        "extra blank line after nested-table table, before={before:?}"
+    );
+
+    // Plain stream: exactly one blank line as well.
+    let p = &result.plain_text;
+    let pa = p.find("After paragraph.").expect("plain paragraph missing");
+    assert!(
+        p[..pa].ends_with("inner\n\n"),
+        "expected one blank line in plain, was:\n{:?}",
+        &p[..pa]
+    );
+    assert!(
+        !p[..pa].ends_with("inner\n\n\n"),
+        "extra blank line in plain, was:\n{:?}",
+        &p[..pa]
+    );
+}

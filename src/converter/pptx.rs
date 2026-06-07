@@ -145,6 +145,10 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut current_row: Vec<String> = Vec::new();
     let mut current_cell = String::new();
+    // True when the current `<a:tc>` is a horizontal/vertical merge continuation
+    // (an `hMerge`/`vMerge` placeholder covered by a spanning cell). Its content
+    // belongs to the spanning cell, so the placeholder is emitted empty.
+    let mut current_cell_is_merge = false;
     // Track text state within table cells
     let mut in_cell_paragraph = false;
     let mut in_cell_run = false;
@@ -207,9 +211,11 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
                         graphic_frame_depth += 1;
                         handle_graphic_frame_start(
                             local_str,
+                            e,
                             &mut in_table,
                             &mut in_table_row,
                             &mut in_table_cell,
+                            &mut current_cell_is_merge,
                             &mut in_cell_paragraph,
                             &mut in_cell_run,
                             &mut in_cell_text,
@@ -314,8 +320,20 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
                             in_cell_paragraph = false;
                         }
                         "tc" if in_table_cell => {
-                            current_row.push(current_cell.trim().to_string());
+                            // Merge-continuation placeholders render empty so the
+                            // spanning cell's text is not duplicated across columns.
+                            // (PowerPoint echoes the spanning cell's text into the
+                            // hMerge/vMerge placeholder, so blanking it is what
+                            // dedups; this is preferred over recovering the rare
+                            // orphan-with-text case, which cannot be distinguished
+                            // from that echo by text presence alone.)
+                            if current_cell_is_merge {
+                                current_row.push(String::new());
+                            } else {
+                                current_row.push(current_cell.trim().to_string());
+                            }
                             current_cell.clear();
+                            current_cell_is_merge = false;
                             in_table_cell = false;
                             in_cell_paragraph = false;
                             in_cell_run = false;
@@ -475,9 +493,11 @@ fn handle_shape_empty(
 #[allow(clippy::too_many_arguments)]
 fn handle_graphic_frame_start(
     local_str: &str,
+    e: &quick_xml::events::BytesStart,
     in_table: &mut bool,
     in_table_row: &mut bool,
     in_table_cell: &mut bool,
+    current_cell_is_merge: &mut bool,
     in_cell_paragraph: &mut bool,
     in_cell_run: &mut bool,
     in_cell_text: &mut bool,
@@ -497,6 +517,14 @@ fn handle_graphic_frame_start(
         "tc" if *in_table_row => {
             *in_table_cell = true;
             current_cell.clear();
+            // A cell carrying `hMerge`/`vMerge` is a placeholder covered by a
+            // spanning cell; its visible text (if any) belongs to that cell.
+            let is_merge = |name| {
+                attr_value_unescaped(e, name)
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+            };
+            *current_cell_is_merge = is_merge("hMerge") || is_merge("vMerge");
         }
         "p" if *in_table_cell => {
             // Add space separator between paragraphs in the same cell
@@ -1778,6 +1806,42 @@ mod tests {
             .unwrap();
         assert!(result.markdown.contains("| A | B | C |"));
         assert!(result.markdown.contains("| 1 |  | 3 |"));
+    }
+
+    #[test]
+    fn test_pptx_table_hmerge_cell_empty() {
+        // A horizontal merge: the spanning cell carries the text and the covered
+        // placeholder cell (`hMerge="1"`) renders empty, not duplicated.
+        let slide_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="3" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><a:graphic><a:graphicData><a:tbl><a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Span</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Span</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>B</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#;
+        let (shapes, _) = parse_slide(slide_xml);
+        let table = shapes
+            .iter()
+            .find_map(|s| match s {
+                ShapeContent::Table { headers, rows } => Some((headers, rows)),
+                _ => None,
+            })
+            .expect("table shape");
+        // Header row: spanning cell text in column 1, placeholder empty in column 2.
+        assert_eq!(table.0, &vec!["Span".to_string(), String::new()]);
+        // Data row still has both columns.
+        assert_eq!(table.1[0], vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn test_pptx_table_gridspan_keeps_columns() {
+        // A gridSpan cell keeps its text; the column count stays correct because
+        // DrawingML emits an hMerge placeholder for the covered column.
+        let slide_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="3" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>H1</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>H2</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Wide</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p/></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#;
+        let (shapes, _) = parse_slide(slide_xml);
+        let rows = shapes
+            .iter()
+            .find_map(|s| match s {
+                ShapeContent::Table { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("table shape");
+        // Header row keeps both columns; data row keeps "Wide" then empty placeholder.
+        assert_eq!(rows[0], vec!["Wide".to_string(), String::new()]);
     }
 
     #[test]

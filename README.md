@@ -16,11 +16,11 @@ A pure Rust tool and library that converts various document formats into Markdow
 
 | Format | Extensions | Notes |
 |--------|-----------|-------|
-| DOCX | `.docx` | Headings, tables, lists, bold/italic, hyperlinks, images, text boxes |
-| PPTX | `.pptx` | Slides, tables, speaker notes, images, group shapes |
+| DOCX | `.docx` | Headings, tables (incl. merged/layout tables), lists, bold/italic, hyperlinks, images, text boxes |
+| PPTX | `.pptx` | Slides, tables (incl. merged cells), speaker notes, images, group shapes |
 | XLSX | `.xlsx` | Multi-sheet, date/time handling, images |
 | XLS | `.xls` | Legacy Excel (via calamine) |
-| HTML | `.html`, `.htm` | Full DOM: headings, tables, lists, links, blockquotes, code blocks |
+| HTML | `.html`, `.htm` | Full DOM: headings, tables (incl. `colspan`/`rowspan`), lists, links, blockquotes, code blocks |
 | CSV | `.csv` | Converted to Markdown tables |
 | Jupyter Notebook | `.ipynb` | Markdown cells preserved, code cells in fenced blocks with language detection |
 | JSON | `.json` | Pretty-printed in fenced code blocks |
@@ -116,6 +116,30 @@ Data Overview
 
 > Note: Test multilingual rendering.
 ```
+
+### Tables and merged cells
+
+Every table — plain, merged, or used for page layout — becomes a single
+pipe-delimited Markdown table of the table's true column count. Merged cells
+(`gridSpan`/`vMerge` in DOCX, `colspan`/`rowspan` in HTML) are handled so no
+content is lost:
+
+- a horizontally spanned cell puts its text in the first column it covers and
+  leaves the spanned-over columns empty (empty-fill);
+- a vertically merged (continuation) cell is left blank;
+- a full-width row (a single cell spanning every column) is kept as a normal
+  grid row, empty-filled to the table width — it is **not** turned into a heading
+  or a `**Label:** value` line.
+
+This is deliberately uniform: keeping a merged/layout table as one table (rather
+than splitting it into headings and field lines) gives downstream consumers,
+especially LLMs, a consistent structure. The one exception is a table that
+contains a **nested table** — a nested table cannot live inside a single Markdown
+cell, so such a table is linearized and each cell's text and nested table are
+emitted as standalone blocks.
+
+PPTX tables are likewise rendered as Markdown tables; merged cells keep the
+correct column count and the spanning cell's text is not duplicated.
 
 ## Installation
 

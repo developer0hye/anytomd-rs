@@ -6,6 +6,10 @@
 
 /// Escape special characters in a table cell so that pipes, backslashes,
 /// and newlines do not break Markdown table structure.
+///
+/// Converters that build grid regions from multi-paragraph cells join those
+/// paragraphs with `\n` before calling [`build_table`], so the newline-to-`<br>`
+/// collapse here is what keeps such a cell on a single Markdown table row.
 fn escape_cell(content: &str) -> String {
     content
         .replace('\\', "\\\\")

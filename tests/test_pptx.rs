@@ -12,7 +12,7 @@ use std::io::Cursor;
 /// Contains:
 /// - Slide 1: Title "Sample Presentation", body "Welcome to the presentation."
 /// - Slide 2: Text "Data Overview", table (Name/Value/Status with 3 data rows),
-///            speaker notes "Remember to explain the data table."
+///   speaker notes "Remember to explain the data table."
 /// - Slide 3: Title "Multilingual", Korean text, emoji, speaker notes
 #[test]
 fn test_pptx_convert_file_sample() {
@@ -290,6 +290,82 @@ fn test_pptx_group_shape_convert_file() {
 
     // Title from first slide
     assert_eq!(result.title, Some("Group Shape Demo".to_string()),);
+}
+
+/// Build a single-slide PPTX whose table uses a horizontal merge.
+fn build_merged_table_pptx() -> Vec<u8> {
+    use std::io::Write;
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    let buf = Vec::new();
+    let mut zip = ZipWriter::new(Cursor::new(buf));
+    let opts = SimpleFileOptions::default();
+
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>"#,
+    ).unwrap();
+
+    let pres_xml = r#"<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+    zip.start_file("ppt/presentation.xml", opts).unwrap();
+    zip.write_all(pres_xml.as_bytes()).unwrap();
+
+    let pres_rels = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#;
+    zip.start_file("ppt/_rels/presentation.xml.rels", opts)
+        .unwrap();
+    zip.write_all(pres_rels.as_bytes()).unwrap();
+
+    // Header row uses a 2-column horizontal merge (gridSpan + hMerge placeholder);
+    // the data row has two ordinary cells.
+    let slide1 = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#,
+        r#" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+        r#"<p:cSld><p:spTree>"#,
+        r#"<p:sp><p:nvSpPr><p:cNvPr id="1" name="Title"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>"#,
+        r#"<p:txBody><a:p><a:r><a:t>Merged Table</a:t></a:r></a:p></p:txBody></p:sp>"#,
+        r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="3" name="Tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"#,
+        r#"<a:graphic><a:graphicData><a:tbl>"#,
+        r#"<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Wide Header</a:t></a:r></a:p></a:txBody></a:tc>"#,
+        r#"<a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Wide Header</a:t></a:r></a:p></a:txBody></a:tc></a:tr>"#,
+        r#"<a:tr><a:tc><a:txBody><a:p><a:r><a:t>L</a:t></a:r></a:p></a:txBody></a:tc>"#,
+        r#"<a:tc><a:txBody><a:p><a:r><a:t>R</a:t></a:r></a:p></a:txBody></a:tc></a:tr>"#,
+        r#"</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+        r#"</p:spTree></p:cSld></p:sld>"#,
+    );
+    zip.start_file("ppt/slides/slide1.xml", opts).unwrap();
+    zip.write_all(slide1.as_bytes()).unwrap();
+
+    zip.finish().unwrap().into_inner()
+}
+
+/// Integration test: a PPTX table with a horizontal merge keeps all columns and
+/// does not duplicate the spanning cell's text into the merged placeholder.
+#[test]
+fn test_pptx_merged_table_columns() {
+    let data = build_merged_table_pptx();
+    let result = anytomd::convert_bytes(&data, "pptx", &ConversionOptions::default()).unwrap();
+
+    // Header row: spanning text in the first column, empty placeholder in the second.
+    assert!(
+        result.markdown.contains("| Wide Header |  |"),
+        "merged header columns wrong: {}",
+        result.markdown
+    );
+    // Data row keeps both columns.
+    assert!(
+        result.markdown.contains("| L | R |"),
+        "data columns missing: {}",
+        result.markdown
+    );
+    // The spanning text must appear exactly once (not duplicated into the placeholder).
+    assert_eq!(
+        result.markdown.matches("Wide Header").count(),
+        1,
+        "spanning text duplicated: {}",
+        result.markdown
+    );
 }
 
 /// End-to-end PPTX comment extraction through the public `convert_bytes` API.
