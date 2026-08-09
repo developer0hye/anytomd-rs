@@ -18,8 +18,8 @@ A pure Rust tool and library that converts various document formats into Markdow
 |--------|-----------|-------|
 | DOCX | `.docx` | Headings, tables (incl. merged/layout tables), lists, bold/italic, hyperlinks, images, text boxes |
 | PPTX | `.pptx` | Slides, tables (incl. merged cells), speaker notes, images, group shapes |
-| XLSX | `.xlsx` | Multi-sheet, date/time handling, images |
-| XLS | `.xls` | Legacy Excel (via calamine) |
+| XLSX | `.xlsx` | Multi-sheet, date/time handling, images, single-pass table rendering |
+| XLS | `.xls` | Legacy Excel (via calamine), single-pass table rendering |
 | HTML | `.html`, `.htm` | Full DOM: headings, tables (incl. `colspan`/`rowspan`), lists, links, blockquotes, code blocks |
 | CSV | `.csv` | Converted to Markdown tables |
 | Jupyter Notebook | `.ipynb` | Markdown cells preserved, code cells in fenced blocks with language detection |
@@ -32,6 +32,8 @@ A pure Rust tool and library that converts various document formats into Markdow
 **Note on PDF:** PDF conversion is intentionally out of scope. Gemini, ChatGPT, and Claude already provide native PDF support (with plan/model-specific limits), so anytomd focuses on formats that still benefit from dedicated Markdown conversion. Attempting to convert a PDF will return a descriptive `FormatNotSupported` error.
 
 Format is auto-detected from magic bytes and file extension. ZIP-based formats (DOCX/PPTX/XLSX) are distinguished by inspecting internal archive structure.
+
+Large XLSX/XLS sheets render Markdown and plain text together in one row pass. Workbook parsing still uses memory proportional to the worksheet, but conversion does not build a second full cell matrix before producing output.
 
 ## Conversion Examples
 

@@ -4,19 +4,38 @@
 //! wrapping text with bold/italic markers, and generating list items.
 //! Also includes plain-text equivalents for the `plain_text` output path.
 
-/// Escape special characters in a table cell so that pipes, backslashes,
-/// and newlines do not break Markdown table structure.
+/// Write a table cell while escaping characters that would break Markdown.
 ///
 /// Converters that build grid regions from multi-paragraph cells join those
 /// paragraphs with `\n` before calling [`build_table`], so the newline-to-`<br>`
 /// collapse here is what keeps such a cell on a single Markdown table row.
+pub(crate) fn write_escaped_cell(out: &mut String, content: &str) {
+    let mut unescaped_start = 0;
+
+    for (index, byte) in content.bytes().enumerate() {
+        let replacement = match byte {
+            b'\\' => Some("\\\\"),
+            b'|' => Some("\\|"),
+            b'\n' => Some("<br>"),
+            b'\r' => Some(""),
+            _ => None,
+        };
+
+        if let Some(replacement) = replacement {
+            out.push_str(&content[unescaped_start..index]);
+            out.push_str(replacement);
+            unescaped_start = index + 1;
+        }
+    }
+
+    out.push_str(&content[unescaped_start..]);
+}
+
+#[cfg(test)]
 fn escape_cell(content: &str) -> String {
-    content
-        .replace('\\', "\\\\")
-        .replace('|', "\\|")
-        .replace("\r\n", "<br>")
-        .replace('\n', "<br>")
-        .replace('\r', "")
+    let mut escaped = String::with_capacity(content.len());
+    write_escaped_cell(&mut escaped, content);
+    escaped
 }
 
 /// Build a pipe-delimited Markdown table from headers and rows.
@@ -36,7 +55,7 @@ pub fn build_table(headers: &[&str], rows: &[Vec<&str>]) -> String {
     out.push('|');
     for h in headers {
         out.push(' ');
-        out.push_str(&escape_cell(h));
+        write_escaped_cell(&mut out, h);
         out.push_str(" |");
     }
     out.push('\n');
@@ -54,7 +73,7 @@ pub fn build_table(headers: &[&str], rows: &[Vec<&str>]) -> String {
         for i in 0..col_count {
             out.push(' ');
             if let Some(cell) = row.get(i) {
-                out.push_str(&escape_cell(cell));
+                write_escaped_cell(&mut out, cell);
             }
             out.push_str(" |");
         }
@@ -84,16 +103,24 @@ pub fn build_table_plain(headers: &[&str], rows: &[Vec<&str>]) -> String {
     let mut out = String::new();
 
     // Header row: tab-separated
-    out.push_str(&headers.join("\t"));
+    for (index, header) in headers.iter().enumerate() {
+        if index > 0 {
+            out.push('\t');
+        }
+        out.push_str(header);
+    }
     out.push('\n');
 
     // Data rows: tab-separated, padded to header count
     for row in rows {
-        let mut cells: Vec<&str> = Vec::with_capacity(col_count);
         for i in 0..col_count {
-            cells.push(row.get(i).copied().unwrap_or(""));
+            if i > 0 {
+                out.push('\t');
+            }
+            if let Some(cell) = row.get(i) {
+                out.push_str(cell);
+            }
         }
-        out.push_str(&cells.join("\t"));
         out.push('\n');
     }
 
