@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use quick_xml::Reader;
-use quick_xml::events::Event;
+use quick_xml::events::{BytesRef, BytesText, Event};
+use quick_xml::{Reader, XmlVersion};
 
 use crate::converter::{
     ConversionWarning, ImageDescriber, WarningCode, replace_image_alt_by_placeholder,
@@ -55,7 +55,7 @@ pub(crate) fn parse_relationships(xml: &str) -> HashMap<String, Relationship> {
                     for attr in e.attributes().flatten() {
                         let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
                         let val = attr
-                            .decode_and_unescape_value(reader.decoder())
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
                             .map(|v| v.into_owned())
                             .unwrap_or_else(|_| {
                                 String::from_utf8_lossy(attr.value.as_ref()).to_string()
@@ -95,13 +95,44 @@ pub(crate) fn attr_value_unescaped(
         let key = attr.key.local_name();
         if std::str::from_utf8(key.as_ref()).unwrap_or("") == local {
             let val = attr
-                .unescape_value()
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, e.decoder())
                 .map(|v| v.into_owned())
                 .unwrap_or_else(|_| String::from_utf8_lossy(attr.value.as_ref()).to_string());
             return Some(val);
         }
     }
     None
+}
+
+/// Decode and XML-unescape a text event, falling back to lossy UTF-8.
+pub(crate) fn text_value_unescaped(e: &BytesText<'_>) -> String {
+    let decoded = e
+        .decode()
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|_| String::from_utf8_lossy(e.as_ref()).into_owned());
+    quick_xml::escape::unescape(&decoded)
+        .map(|value| value.into_owned())
+        .unwrap_or(decoded)
+}
+
+/// Resolve a character or predefined XML entity reference into text.
+pub(crate) fn general_ref_value(e: &BytesRef<'_>) -> String {
+    if let Ok(Some(character)) = e.resolve_char_ref() {
+        return character.to_string();
+    }
+
+    let name = e
+        .decode()
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|_| String::from_utf8_lossy(e.as_ref()).into_owned());
+    match name.as_str() {
+        "amp" => "&".to_string(),
+        "lt" => "<".to_string(),
+        "gt" => ">".to_string(),
+        "apos" => "'".to_string(),
+        "quot" => "\"".to_string(),
+        _ => format!("&{name};"),
+    }
 }
 
 /// Derive the .rels path for a given file path.
@@ -333,6 +364,21 @@ mod tests {
             assert_eq!(attr_value_unescaped(e, "author").as_deref(), Some("Jane"));
             assert_eq!(attr_value_unescaped(e, "missing"), None);
         });
+    }
+
+    #[test]
+    fn test_text_value_unescaped_decodes_entities() {
+        let mut reader = Reader::from_str("<e>R&amp;D &lt;ok&gt; &#x1F680;</e>");
+        let mut value = String::new();
+        loop {
+            match reader.read_event() {
+                Ok(Event::Text(ref e)) => value.push_str(&text_value_unescaped(e)),
+                Ok(Event::GeneralRef(ref e)) => value.push_str(&general_ref_value(e)),
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+        }
+        assert_eq!(value, "R&D <ok> 🚀");
     }
 
     #[test]
