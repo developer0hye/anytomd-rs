@@ -15,7 +15,8 @@ use zip::ZipArchive;
 use crate::converter::comments::{self, Comment};
 use crate::converter::ooxml_utils::{
     ImageInfo, PendingImageResolution, Relationship, attr_value_unescaped, derive_rels_path,
-    parse_relationships, resolve_image_placeholders, resolve_relative_to_file,
+    general_ref_value, parse_relationships, resolve_image_placeholders, resolve_relative_to_file,
+    text_value_unescaped,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -261,10 +262,18 @@ fn parse_slide(xml: &str) -> (Vec<ShapeContent>, Vec<ConversionWarning>) {
             }
             Ok(Event::Text(ref e)) => {
                 if in_shape && in_text && in_run {
-                    let text = e.unescape().unwrap_or_default().to_string();
+                    let text = text_value_unescaped(e);
                     current_paragraph.push_str(&text);
                 } else if in_graphic_frame && in_cell_text && in_cell_run {
-                    let text = e.unescape().unwrap_or_default().to_string();
+                    let text = text_value_unescaped(e);
+                    current_cell.push_str(&text);
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) => {
+                let text = general_ref_value(e);
+                if in_shape && in_text && in_run {
+                    current_paragraph.push_str(&text);
+                } else if in_graphic_frame && in_cell_text && in_cell_run {
                     current_cell.push_str(&text);
                 }
             }
@@ -689,8 +698,11 @@ fn parse_notes(xml: &str) -> Option<String> {
                 }
             }
             Ok(Event::Text(ref e)) if in_shape && in_text && in_run => {
-                let text = e.unescape().unwrap_or_default().to_string();
+                let text = text_value_unescaped(e);
                 current_paragraph.push_str(&text);
+            }
+            Ok(Event::GeneralRef(ref e)) if in_shape && in_text && in_run => {
+                current_paragraph.push_str(&general_ref_value(e));
             }
             Ok(Event::End(ref e)) => {
                 let local = e.local_name();
@@ -952,7 +964,10 @@ fn parse_legacy_comments(xml: &str, authors: &HashMap<String, String>) -> Vec<Ra
                 }
             }
             Ok(Event::Text(ref e)) if in_text => {
-                body.push_str(&e.unescape().unwrap_or_default());
+                body.push_str(&text_value_unescaped(e));
+            }
+            Ok(Event::GeneralRef(ref e)) if in_text => {
+                body.push_str(&general_ref_value(e));
             }
             Ok(Event::End(ref e)) => {
                 let local = e.local_name();
@@ -1055,7 +1070,12 @@ fn parse_modern_comments(xml: &str, authors: &HashMap<String, String>) -> Vec<Ra
             }
             Ok(Event::Text(ref e)) if in_text => {
                 if let Some(frame) = stack.last_mut() {
-                    frame.body.push_str(&e.unescape().unwrap_or_default());
+                    frame.body.push_str(&text_value_unescaped(e));
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if in_text => {
+                if let Some(frame) = stack.last_mut() {
+                    frame.body.push_str(&general_ref_value(e));
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -1630,6 +1650,26 @@ mod tests {
             .unwrap();
         assert!(result.markdown.contains("## Slide 1: Hello World"));
         assert!(result.markdown.contains("This is the body text."));
+    }
+
+    #[test]
+    fn test_pptx_text_entity_references_preserved() {
+        let data = build_test_pptx(&[TestSlide {
+            title: Some("R&amp;D"),
+            body_texts: vec!["&lt;ready&gt; &#x1F680;"],
+            notes: None,
+            table: None,
+            images: vec![],
+            image_alt_texts: vec![],
+        }]);
+        let result = PptxConverter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+
+        assert!(result.markdown.contains("## Slide 1: R&D"));
+        assert!(result.markdown.contains("<ready> 🚀"));
+        assert!(result.plain_text.contains("R&D"));
+        assert!(result.plain_text.contains("<ready> 🚀"));
     }
 
     #[test]

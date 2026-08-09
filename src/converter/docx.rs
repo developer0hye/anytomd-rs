@@ -15,8 +15,8 @@ use zip::ZipArchive;
 
 use crate::converter::comments::{self, Comment};
 use crate::converter::ooxml_utils::{
-    ImageInfo, PendingImageResolution, Relationship, parse_relationships,
-    resolve_image_placeholders, resolve_relative_to_file,
+    ImageInfo, PendingImageResolution, Relationship, general_ref_value, parse_relationships,
+    resolve_image_placeholders, resolve_relative_to_file, text_value_unescaped,
 };
 use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
@@ -1150,7 +1150,7 @@ fn parse_document(
                     continue;
                 }
                 if in_text && in_run {
-                    let text = e.unescape().unwrap_or_default().to_string();
+                    let text = text_value_unescaped(e);
                     let seg = RunSegment {
                         text,
                         bold: current_run_bold,
@@ -1163,6 +1163,20 @@ fn parse_document(
                         current_para_runs.push(seg.clone());
                         current_para_runs_plain.push(seg);
                     }
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if !in_mc_choice && in_text && in_run => {
+                let seg = RunSegment {
+                    text: general_ref_value(e),
+                    bold: current_run_bold,
+                    italic: current_run_italic,
+                };
+                if in_hyperlink {
+                    hyperlink_runs.push(seg.clone());
+                    hyperlink_runs_plain.push(seg);
+                } else {
+                    current_para_runs.push(seg.clone());
+                    current_para_runs_plain.push(seg);
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -1737,7 +1751,10 @@ fn parse_comments_xml(xml: &str) -> HashMap<String, RawComment> {
                 }
             }
             Ok(Event::Text(ref e)) if in_text => {
-                cur_body.push_str(&e.unescape().unwrap_or_default());
+                cur_body.push_str(&text_value_unescaped(e));
+            }
+            Ok(Event::GeneralRef(ref e)) if in_text => {
+                cur_body.push_str(&general_ref_value(e));
             }
             Ok(Event::End(ref e)) => {
                 let local = e.local_name();
@@ -1933,7 +1950,13 @@ fn collect_ranges_in_part(xml: &str) -> (Vec<String>, HashMap<String, String>) {
                 }
             }
             Ok(Event::Text(ref e)) if in_text && in_run && !open.is_empty() => {
-                let t = e.unescape().unwrap_or_default();
+                let t = text_value_unescaped(e);
+                for id in &open {
+                    push_capped(text.entry(id.clone()).or_default(), &t);
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if in_text && in_run && !open.is_empty() => {
+                let t = general_ref_value(e);
                 for id in &open {
                     push_capped(text.entry(id.clone()).or_default(), &t);
                 }
@@ -2433,6 +2456,18 @@ mod tests {
             .convert(&data, &ConversionOptions::default())
             .unwrap();
         assert_eq!(result.markdown.trim(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_docx_text_entity_references_preserved() {
+        let doc = wrap_body(&para("R&amp;D &lt;ready&gt; &#x1F680;"));
+        let data = build_test_docx(&doc, None, None);
+        let result = DocxConverter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+
+        assert_eq!(result.markdown.trim(), "R&D <ready> 🚀");
+        assert_eq!(result.plain_text.trim(), "R&D <ready> 🚀");
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! a Markdown table. Handles dates, times, formulas, error cells, and
 //! embedded images.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -21,7 +22,7 @@ use crate::converter::{
     ConversionOptions, ConversionResult, ConversionWarning, Converter, WarningCode,
 };
 use crate::error::ConvertError;
-use crate::markdown::{build_table, build_table_plain, format_heading};
+use crate::markdown::{format_heading, write_escaped_cell};
 use crate::zip_utils::{read_zip_bytes, read_zip_text};
 
 /// Converts XLSX and XLS spreadsheet files to Markdown.
@@ -181,23 +182,27 @@ fn col_letter(col: usize) -> String {
 ///
 /// Note: calamine returns computed values for formula cells, not the formula text.
 /// This means formulas like `=SUM(A1:A3)` appear as their computed numeric result.
-fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning>) -> String {
+fn format_cell<'a>(
+    cell: &'a Data,
+    location: &str,
+    warnings: &mut Vec<ConversionWarning>,
+) -> Cow<'a, str> {
     match cell {
-        Data::Empty => String::new(),
-        Data::String(s) => s.clone(),
+        Data::Empty => Cow::Borrowed(""),
+        Data::String(s) => Cow::Borrowed(s),
         Data::Float(f) => {
             if f.is_finite() && f.fract() == 0.0 {
-                format!("{:.0}", f)
+                Cow::Owned(format!("{:.0}", f))
             } else {
-                f.to_string()
+                Cow::Owned(f.to_string())
             }
         }
-        Data::Int(i) => i.to_string(),
+        Data::Int(i) => Cow::Owned(i.to_string()),
         Data::Bool(b) => {
             if *b {
-                "TRUE".to_string()
+                Cow::Borrowed("TRUE")
             } else {
-                "FALSE".to_string()
+                Cow::Borrowed("FALSE")
             }
         }
         Data::DateTime(dt) => {
@@ -205,9 +210,14 @@ fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning
                 let (h, m, s) = (ndt.hour(), ndt.minute(), ndt.second());
                 if h == 0 && m == 0 && s == 0 {
                     // Date-only: no time component
-                    format!("{:04}-{:02}-{:02}", ndt.year(), ndt.month(), ndt.day())
+                    Cow::Owned(format!(
+                        "{:04}-{:02}-{:02}",
+                        ndt.year(),
+                        ndt.month(),
+                        ndt.day()
+                    ))
                 } else {
-                    format!(
+                    Cow::Owned(format!(
                         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
                         ndt.year(),
                         ndt.month(),
@@ -215,15 +225,15 @@ fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning
                         h,
                         m,
                         s
-                    )
+                    ))
                 }
             } else {
                 // Fallback: use Display impl
-                format!("{dt}")
+                Cow::Owned(format!("{dt}"))
             }
         }
-        Data::DateTimeIso(s) => s.clone(),
-        Data::DurationIso(s) => s.clone(),
+        Data::DateTimeIso(s) => Cow::Borrowed(s),
+        Data::DurationIso(s) => Cow::Borrowed(s),
         Data::Error(e) => {
             let error_text = format!("{e}");
             warnings.push(ConversionWarning {
@@ -231,8 +241,85 @@ fn format_cell(cell: &Data, location: &str, warnings: &mut Vec<ConversionWarning
                 message: format!("cell contains error: {error_text}"),
                 location: Some(location.to_string()),
             });
-            error_text
+            Cow::Owned(error_text)
         }
+    }
+}
+
+/// Format a cell while deferring location allocation until an error warning needs it.
+fn format_cell_at<'a>(
+    cell: &'a Data,
+    sheet_name: &str,
+    row_number: usize,
+    column_index: usize,
+    warnings: &mut Vec<ConversionWarning>,
+) -> Cow<'a, str> {
+    if matches!(cell, Data::Error(_)) {
+        let location = format!("{sheet_name}!{}{row_number}", col_letter(column_index));
+        format_cell(cell, &location, warnings)
+    } else {
+        format_cell(cell, "", warnings)
+    }
+}
+
+/// Render a sheet directly into both output buffers from a single row iterator.
+fn render_sheet_rows<'a, I>(
+    name: &str,
+    mut rows: I,
+    markdown: &mut String,
+    plain_text: &mut String,
+    warnings: &mut Vec<ConversionWarning>,
+) where
+    I: Iterator<Item = &'a [Data]>,
+{
+    let Some(header_row) = rows.next() else {
+        return;
+    };
+    let column_count = header_row.len();
+    if column_count == 0 {
+        return;
+    }
+
+    markdown.push_str(&format_heading(2, name));
+    plain_text.push_str(name);
+    plain_text.push('\n');
+
+    markdown.push('|');
+    for (column_index, cell) in header_row.iter().enumerate() {
+        let value = format_cell_at(cell, name, 1, column_index, warnings);
+        markdown.push(' ');
+        write_escaped_cell(markdown, &value);
+        markdown.push_str(" |");
+        if column_index > 0 {
+            plain_text.push('\t');
+        }
+        plain_text.push_str(&value);
+    }
+    markdown.push('\n');
+    plain_text.push('\n');
+
+    markdown.push('|');
+    for _ in 0..column_count {
+        markdown.push_str("---|");
+    }
+    markdown.push('\n');
+
+    for (row_index, row) in rows.enumerate() {
+        markdown.push('|');
+        for column_index in 0..column_count {
+            markdown.push(' ');
+            if let Some(cell) = row.get(column_index) {
+                let value = format_cell_at(cell, name, row_index + 2, column_index, warnings);
+                write_escaped_cell(markdown, &value);
+                plain_text.push_str(&value);
+            }
+            markdown.push_str(" |");
+            if column_index + 1 < column_count {
+                plain_text.push('\t');
+            }
+        }
+        markdown.push('\n');
+        plain_text.push('\n');
     }
 }
 
@@ -260,12 +347,23 @@ impl XlsxConverter {
         let mut workbook = open_workbook_auto_from_rs(cursor)?;
 
         let sheet_names = workbook.sheet_names().to_owned();
-        let mut sections = Vec::new();
-        let mut plain_sections = Vec::new();
+        let mut markdown = String::new();
+        let mut plain_text = String::new();
         let mut warnings = Vec::new();
 
-        // Track which sheet index each section corresponds to (for image attachment)
-        let mut section_sheet_indices: Vec<usize> = Vec::new();
+        // Open a separate archive because calamine owns its workbook cursor.
+        let need_image_bytes = options.extract_images || options.image_describer.is_some();
+        let mut image_archive = if need_image_bytes {
+            Some(ZipArchive::new(Cursor::new(data))?)
+        } else {
+            None
+        };
+        let mut images: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut image_bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut image_infos: Vec<ImageInfo> = Vec::new();
+        let mut image_counter: usize = 0;
+        let mut total_image_bytes: usize = 0;
+        let mut rendered_sheet_count = 0;
 
         for (sheet_idx, name) in sheet_names.iter().enumerate() {
             let range = match workbook.worksheet_range(name) {
@@ -284,67 +382,21 @@ impl XlsxConverter {
                 continue;
             }
 
-            let mut rows_iter = range.rows();
-            let header_row = match rows_iter.next() {
-                Some(row) => row,
-                None => continue,
-            };
-
-            let headers: Vec<String> = header_row
-                .iter()
-                .enumerate()
-                .map(|(ci, cell)| {
-                    let loc = format!("{}!{}1", name, col_letter(ci));
-                    format_cell(cell, &loc, &mut warnings)
-                })
-                .collect();
-            let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
-
-            let mut data_rows: Vec<Vec<String>> = Vec::new();
-            for (ri, row) in rows_iter.enumerate() {
-                let cells: Vec<String> = row
-                    .iter()
-                    .enumerate()
-                    .map(|(ci, cell)| {
-                        let loc = format!("{}!{}{}", name, col_letter(ci), ri + 2);
-                        format_cell(cell, &loc, &mut warnings)
-                    })
-                    .collect();
-                data_rows.push(cells);
+            if rendered_sheet_count > 0 {
+                markdown.push('\n');
+                plain_text.push('\n');
             }
+            render_sheet_rows(
+                name,
+                range.rows(),
+                &mut markdown,
+                &mut plain_text,
+                &mut warnings,
+            );
 
-            let row_refs: Vec<Vec<&str>> = data_rows
-                .iter()
-                .map(|row| row.iter().map(|s| s.as_str()).collect())
-                .collect();
+            if let Some(archive) = image_archive.as_mut() {
+                let sheet_images = extract_sheet_images(archive, sheet_idx);
 
-            let heading = format_heading(2, name);
-            let table = build_table(&header_refs, &row_refs);
-            sections.push(format!("{heading}{table}"));
-
-            let plain_table = build_table_plain(&header_refs, &row_refs);
-            plain_sections.push(format!("{name}\n{plain_table}"));
-
-            section_sheet_indices.push(sheet_idx);
-        }
-
-        // Extract embedded images if requested or if describer needs them
-        let need_image_bytes = options.extract_images || options.image_describer.is_some();
-        let mut images: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut image_bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
-        let mut image_infos: Vec<ImageInfo> = Vec::new();
-        let mut image_counter: usize = 0;
-
-        if need_image_bytes {
-            // Open a fresh ZipArchive (calamine consumed the original cursor)
-            let mut archive = ZipArchive::new(Cursor::new(data))?;
-            let mut total_image_bytes: usize = 0;
-
-            for (section_idx, &sheet_idx) in section_sheet_indices.iter().enumerate() {
-                let sheet_images = extract_sheet_images(&mut archive, sheet_idx);
-
-                let mut image_lines = Vec::new();
-                let mut plain_image_lines = Vec::new();
                 for (filename, img_data) in sheet_images {
                     total_image_bytes += img_data.len();
                     if total_image_bytes <= options.max_total_image_bytes {
@@ -357,8 +409,14 @@ impl XlsxConverter {
                             filename: filename.clone(),
                             bytes_key: bytes_key.clone(),
                         });
-                        image_lines.push(format!("![{placeholder}]({filename})"));
-                        plain_image_lines.push(placeholder);
+                        markdown.push('\n');
+                        markdown.push_str("![");
+                        markdown.push_str(&placeholder);
+                        markdown.push_str("](");
+                        markdown.push_str(&filename);
+                        markdown.push(')');
+                        plain_text.push('\n');
+                        plain_text.push_str(&placeholder);
                         if options.extract_images {
                             images.push((filename.clone(), img_data.clone()));
                         }
@@ -374,17 +432,10 @@ impl XlsxConverter {
                         });
                     }
                 }
-
-                if !image_lines.is_empty() {
-                    sections[section_idx].push_str(&format!("\n{}", image_lines.join("\n")));
-                    plain_sections[section_idx]
-                        .push_str(&format!("\n{}", plain_image_lines.join("\n")));
-                }
             }
-        }
 
-        let markdown = sections.join("\n");
-        let plain_text = plain_sections.join("\n");
+            rendered_sheet_count += 1;
+        }
 
         let result = ConversionResult {
             markdown,
@@ -795,6 +846,73 @@ mod tests {
         assert!(result.markdown.contains("2"));
         // Full row should be intact
         assert!(result.markdown.contains("| x | y | z |"));
+    }
+
+    #[test]
+    fn test_render_sheet_rows_writes_markdown_and_plain_text_in_one_pass() {
+        let rows = [
+            vec![
+                Data::String("Name|Path".to_string()),
+                Data::String("Notes".to_string()),
+            ],
+            vec![
+                Data::String(r"a\b".to_string()),
+                Data::String("line1\r\nline2".to_string()),
+            ],
+            vec![Data::String("short".to_string())],
+            vec![
+                Data::String("broken".to_string()),
+                Data::Error(calamine::CellErrorType::Div0),
+            ],
+        ];
+        let mut markdown = String::new();
+        let mut plain_text = String::new();
+        let mut warnings = Vec::new();
+
+        render_sheet_rows(
+            "Data",
+            rows.iter().map(Vec::as_slice),
+            &mut markdown,
+            &mut plain_text,
+            &mut warnings,
+        );
+
+        assert_eq!(
+            markdown,
+            "## Data\n| Name\\|Path | Notes |\n|---|---|\n\
+             | a\\\\b | line1<br>line2 |\n\
+             | short |  |\n\
+             | broken | #DIV/0! |\n"
+        );
+        assert_eq!(
+            plain_text,
+            "Data\nName|Path\tNotes\na\\b\tline1\r\nline2\nshort\t\nbroken\t#DIV/0!\n"
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].location.as_deref(), Some("Data!B4"));
+    }
+
+    #[test]
+    fn test_render_sheet_rows_issue_94_scale_preserves_every_row() {
+        const COLUMN_COUNT: usize = 18;
+        const DATA_ROW_COUNT: usize = 87_000;
+
+        let header_row: Vec<Data> = (0..COLUMN_COUNT)
+            .map(|index| Data::String(format!("H{index}")))
+            .collect();
+        let data_row = vec![Data::String("value".to_string()); COLUMN_COUNT];
+        let rows = std::iter::once(header_row.as_slice())
+            .chain(std::iter::repeat(data_row.as_slice()).take(DATA_ROW_COUNT));
+        let mut markdown = String::new();
+        let mut plain_text = String::new();
+        let mut warnings = Vec::new();
+
+        render_sheet_rows("Large", rows, &mut markdown, &mut plain_text, &mut warnings);
+
+        assert_eq!(markdown.lines().count(), DATA_ROW_COUNT + 3);
+        assert_eq!(plain_text.lines().count(), DATA_ROW_COUNT + 2);
+        assert!(markdown.ends_with("| value | value | value | value | value | value | value | value | value | value | value | value | value | value | value | value | value | value |\n"));
+        assert!(warnings.is_empty());
     }
 
     #[test]
