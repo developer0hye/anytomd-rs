@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   msrv:
     name: MSRV (1.89)
@@ -23,10 +26,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build
+        run: cargo build --locked
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
   check:
     name: Check (${{ matrix.os }})
@@ -48,28 +51,28 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Lint (async feature)
-        run: cargo clippy --features async -- -D warnings
+        run: cargo clippy --locked --features async -- -D warnings
 
       - name: Test (async feature)
-        run: cargo test --features async
+        run: cargo test --locked --features async
 
       - name: Lint (async-gemini feature)
-        run: cargo clippy --features async-gemini -- -D warnings
+        run: cargo clippy --locked --features async-gemini -- -D warnings
 
       - name: Test (async-gemini feature)
-        run: cargo test --features async-gemini
+        run: cargo test --locked --features async-gemini
 
       - name: CLI smoke test
-        run: echo "hello" | cargo run -- --format txt
+        run: echo "hello" | cargo run --locked -- --format txt
 
   wasm:
     name: WASM Check
@@ -85,25 +88,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check (no default features)
-        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features
+        run: cargo check --locked --lib --target wasm32-unknown-unknown --no-default-features
 
       - name: Check (async feature)
-        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features async
+        run: cargo check --locked --lib --target wasm32-unknown-unknown --no-default-features --features async
 
       - name: Check (wasm feature)
-        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features wasm
+        run: cargo check --locked --lib --target wasm32-unknown-unknown --no-default-features --features wasm
 
       - name: Clippy (wasm)
-        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
+        run: cargo clippy --locked --lib --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
 
       - name: Check (wasm + async-gemini)
-        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini
+        run: cargo check --locked --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini
 
       - name: Clippy (wasm + async-gemini)
-        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini -- -D warnings
+        run: cargo clippy --locked --lib --target wasm32-unknown-unknown --no-default-features --features wasm,async-gemini -- -D warnings
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run: cargo install wasm-pack --locked --version 0.15.0
 
       - name: Run WASM tests
         run: wasm-pack test --node --no-default-features --features wasm
@@ -111,6 +114,10 @@ jobs:
   security:
     name: Security
     runs-on: ubuntu-latest
+    # gitleaks-action lists the PR's commits and comments on findings.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,7 +148,7 @@ jobs:
         # CI fails before crates.io ever sees it.
         run: |
           set -e
-          list=$(cargo package --list 2>&1)
+          list=$(cargo package --locked --list 2>&1)
           echo "$list"
           if echo "$list" | grep -E '(^|/)\.env(\.|$)|(^|/)\.omc/|(^|/)\.claude/|\.pem$|\.key$|id_rsa|credentials|secrets?\.' ; then
             echo "::error::Sensitive file pattern found in publish package contents"

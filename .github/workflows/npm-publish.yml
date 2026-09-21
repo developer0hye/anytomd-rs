@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   npm-publish:
     runs-on: ubuntu-latest
@@ -17,7 +20,7 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run: cargo install wasm-pack --locked --version 0.15.0
       - name: Build WASM package
         run: wasm-pack build --target bundler --no-default-features --features wasm,async-gemini
       - name: Publish to npm
