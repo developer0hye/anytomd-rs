@@ -56,8 +56,9 @@ pub fn detect_zip_format(data: &[u8]) -> Option<&'static str> {
     let mut archive = zip::ZipArchive::new(cursor).ok()?;
 
     for i in 0..archive.len() {
-        if let Ok(file) = archive.by_index_raw(i) {
-            let name = file.name();
+        if let Ok(file) = archive.by_index_raw(i)
+            && let Ok(name) = file.name()
+        {
             if name.starts_with("word/") {
                 return Some("docx");
             }

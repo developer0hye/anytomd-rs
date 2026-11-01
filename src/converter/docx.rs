@@ -2129,7 +2129,10 @@ fn extract_docx_comments(
     // Discover extra content parts in fixed-category order: headers, footers,
     // then footnotes/endnotes. Within a category, sort by filename.
     let names: Vec<String> = (0..archive.len())
-        .filter_map(|i| archive.by_index_raw(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| {
+            let file = archive.by_index_raw(i).ok()?;
+            file.name().ok().map(|name| name.into_owned())
+        })
         .collect();
     let mut headers: Vec<String> = names
         .iter()
