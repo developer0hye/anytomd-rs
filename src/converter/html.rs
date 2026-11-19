@@ -117,6 +117,8 @@ struct WalkerState {
 struct ListContext {
     ordered: bool,
     item_count: usize,
+    /// Output position right after the current item's marker.
+    text_start: usize,
 }
 
 struct PendingHeading {
@@ -415,9 +417,17 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                         });
                     }
                 }
-                "p" if !state.in_table_cell() => {
-                    state.both_ensure_blank_line();
-                }
+                "p" if !state.in_table_cell() => match state.list_stack.last() {
+                    // First paragraph of a list item: keep it on the marker line.
+                    Some(ctx) if ctx.text_start == state.output.len() => {}
+                    Some(_) => {
+                        state.both_ensure_newline();
+                        let indent = "  ".repeat(state.list_stack.len());
+                        state.push_str(&indent);
+                        state.plain_push_str(&indent);
+                    }
+                    None => state.both_ensure_blank_line(),
+                },
                 "a" => {
                     let href = el.attr("href").unwrap_or("").to_string();
                     state.pending_link = Some(PendingLink {
@@ -458,6 +468,7 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                     state.list_stack.push(ListContext {
                         ordered: false,
                         item_count: 0,
+                        text_start: 0,
                     });
                 }
                 "ol" => {
@@ -469,6 +480,7 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                     state.list_stack.push(ListContext {
                         ordered: true,
                         item_count: 0,
+                        text_start: 0,
                     });
                 }
                 "li" => {
@@ -487,6 +499,10 @@ fn handle_open(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                     state.push_str(&prefix);
                     // plain text: just indentation, no marker
                     state.plain_push_str(&indent);
+                    let text_start = state.output.len();
+                    if let Some(ctx) = state.list_stack.last_mut() {
+                        ctx.text_start = text_start;
+                    }
                 }
                 "table" => {
                     state.both_ensure_blank_line();
@@ -624,7 +640,11 @@ fn handle_close(state: &mut WalkerState, node: &ego_tree::NodeRef<Node>) {
                 }
             }
             "p" if !state.in_table_cell() => {
-                state.both_ensure_blank_line();
+                if state.list_stack.is_empty() {
+                    state.both_ensure_blank_line();
+                } else {
+                    state.both_ensure_newline();
+                }
             }
             "a" => {
                 if let Some(pending) = state.pending_link.take() {
@@ -1346,6 +1366,14 @@ mod tests {
         assert!(result.markdown.contains("  - Inner A"));
         assert!(result.markdown.contains("  - Inner B"));
         assert!(result.markdown.contains("- Outer 2"));
+    }
+
+    #[test]
+    fn test_html_list_item_paragraphs() {
+        let html = "<ul><li><p>Apple</p></li><li><p>Banana</p><p>ripe</p></li></ul><p>after</p>";
+        let result = convert_html(html);
+        assert!(result.markdown.contains("- Apple\n- Banana\n  ripe\n"));
+        assert!(result.markdown.contains("\n\nafter"));
     }
 
     #[test]
