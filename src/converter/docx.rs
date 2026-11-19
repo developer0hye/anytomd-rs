@@ -1104,9 +1104,9 @@ fn parse_document(
                     "i" if in_run_properties => {
                         current_run_italic = !is_val_false(e);
                     }
-                    "br" if in_run => {
+                    "br" | "tab" if in_run => {
                         let seg = RunSegment {
-                            text: "\n".to_string(),
+                            text: if local_str == "tab" { "\t" } else { "\n" }.to_string(),
                             bold: false,
                             italic: false,
                         };
@@ -2643,6 +2643,19 @@ mod tests {
             .convert(&data, &ConversionOptions::default())
             .unwrap();
         assert!(result.markdown.contains("Line one\nLine two"));
+    }
+
+    #[test]
+    fn test_docx_tab() {
+        let body = r#"<w:p><w:r><w:t>Total</w:t><w:tab/><w:t>$5.00</w:t></w:r></w:p>"#;
+        let doc = wrap_body(body);
+        let data = build_test_docx(&doc, None, None);
+        let converter = DocxConverter;
+        let result = converter
+            .convert(&data, &ConversionOptions::default())
+            .unwrap();
+        assert!(result.markdown.contains("Total\t$5.00"));
+        assert!(result.plain_text.contains("Total\t$5.00"));
     }
 
     #[test]
